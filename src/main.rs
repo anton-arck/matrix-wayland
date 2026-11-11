@@ -409,7 +409,14 @@ fn write_waybar_css(accent: Option<[u8; 3]>) -> Result<(), String> {
         if m.file_type().is_symlink() { return Err(format!("{} es un symlink; no se toca", path.display())); }
     }
     let body = match accent {
-        Some(c) => format!("/* generado por matrix-wayland */\n@define-color matrix_accent #{:02x}{:02x}{:02x};\n", c[0], c[1], c[2]),
+        Some(c) => format!(
+            "/* generado por matrix-wayland */\n\
+             @define-color matrix_accent #{r:02x}{g:02x}{b:02x};\n\
+             @define-color matrix_fg #{r:02x}{g:02x}{b:02x};\n\
+             @define-color matrix_bar_bg #000000;\n\
+             @define-color matrix_mod_bg #000000;\n\
+             @define-color matrix_mod_hover rgba({r},{g},{b},0.25);\n",
+            r = c[0], g = c[1], b = c[2]),
         None => "/* generado por matrix-wayland: inactivo, se usa el color por defecto del style.css */\n".to_string(),
     };
     let tmp = path.with_extension("css.tmp");
