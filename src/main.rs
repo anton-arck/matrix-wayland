@@ -310,7 +310,9 @@ extern "C" {
 }
 
 static STOP: AtomicBool = AtomicBool::new(false);
+static KEEP_THEME: AtomicBool = AtomicBool::new(false); // SIGHUP: salir sin restaurar waybar/fuzzel
 extern "C" fn on_signal(_: i32) { STOP.store(true, Ordering::SeqCst); }
+extern "C" fn on_hup(_: i32) { KEEP_THEME.store(true, Ordering::SeqCst); STOP.store(true, Ordering::SeqCst); }
 
 /// El pidfile vive en $XDG_RUNTIME_DIR (privado del usuario, 0700). Sin respaldo a /tmp.
 fn pidfile() -> PathBuf {
@@ -354,11 +356,12 @@ fn running_pid() -> Option<i32> {
     if comm.trim() == "matrix-wayland" { Some(pid) } else { None }
 }
 
-fn cmd_stop() -> bool {
+/// keep_theme = true (restart): el proceso sale sin restaurar los colores, para que el\n/// siguiente arranque los aplique sin una recarga doble de waybar entre medias.
+fn cmd_stop(keep_theme: bool) -> bool {
     match running_pid() {
         None => { eprintln!("matrix-wayland no esta en marcha"); false }
         Some(pid) => {
-            unsafe { kill(pid, 15) };
+            unsafe { kill(pid, if keep_theme { 1 } else { 15 }) };
             for _ in 0..50 { // hasta 5 s para una salida limpia
                 if !std::path::Path::new(&format!("/proc/{pid}")).exists() { println!("detenido"); return true; }
                 std::thread::sleep(Duration::from_millis(100));
@@ -369,7 +372,56 @@ fn cmd_stop() -> bool {
     }
 }
 
+// ---------- integraciones persistentes ----------
+// --waybar / --fuzzel se recuerdan entre arranques (start/restart); se apagan con
+// --no-waybar / --no-fuzzel. Se guardan en $XDG_STATE_HOME/matrix-wayland/integrations.
+fn state_file() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))?;
+    Some(base.join("matrix-wayland").join("integrations"))
+}
+
+fn load_integrations() -> (bool, bool) {
+    let t = state_file().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    (t.lines().any(|l| l.trim() == "waybar"), t.lines().any(|l| l.trim() == "fuzzel"))
+}
+
+fn save_integrations(waybar: bool, fuzzel: bool) {
+    let Some(p) = state_file() else { return };
+    if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
+    let mut body = String::new();
+    if waybar { body.push_str("waybar\n"); }
+    if fuzzel { body.push_str("fuzzel\n"); }
+    let _ = atomic_write(&p, &body);
+}
+
+/// Separa las banderas de integracion de `opts`, las combina con lo recordado y devuelve
+/// las opciones que se pasan al proceso (siempre con --waybar/--fuzzel explicitos).
+fn resolve_integrations(opts: &[String]) -> Vec<String> {
+    let (old_waybar, old_fuzzel) = load_integrations();
+    let (mut waybar, mut fuzzel) = (old_waybar, old_fuzzel);
+    let mut rest = Vec::new();
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match o.as_str() {
+            "--waybar" => waybar = true,
+            "--no-waybar" => waybar = false,
+            "--fuzzel" => fuzzel = true,
+            "--no-fuzzel" => fuzzel = false,
+            _ => rest.push(o.clone()),
+        }
+    }
+    save_integrations(waybar, fuzzel);
+    // si se apaga una integracion, el proceso anterior (restart) pudo dejar su color: restaurar
+    if old_waybar && !waybar { waybar_apply(None); }
+    if old_fuzzel && !fuzzel { fuzzel_apply(None); }
+    if waybar { rest.push("--waybar".into()); }
+    if fuzzel { rest.push("--fuzzel".into()); }
+    rest
+}
+
 fn cmd_start(opts: &[String]) {
+    let opts = &resolve_integrations(opts);
     if let Some(pid) = running_pid() { eprintln!("ya esta en marcha (pid {pid}); usa `matrix-wayland restart`"); std::process::exit(1); }
     let exe = std::env::current_exe().expect("exe");
     let mut c = Command::new(exe);
@@ -477,7 +529,7 @@ fn waybar_apply(accent: Option<[u8; 3]>) {
 }
 
 fn usage() -> ! {
-    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA] [--waybar] [--fuzzel]
+    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA] [--waybar|--no-waybar] [--fuzzel|--no-fuzzel]
   sin subcomando = start. --foreground lo deja en primer plano.");
     std::process::exit(2)
 }
@@ -488,12 +540,12 @@ fn main() {
     let mut a: Vec<String> = std::env::args().skip(1).collect();
     let mut foreground = false;
     match a.first().map(String::as_str) {
-        Some("stop") => std::process::exit(if cmd_stop() { 0 } else { 1 }),
+        Some("stop") => std::process::exit(if cmd_stop(false) { 0 } else { 1 }),
         Some("status") => match running_pid() {
             Some(pid) => { println!("en marcha (pid {pid})"); std::process::exit(0) }
             None => { println!("detenido"); std::process::exit(3) }
         },
-        Some("restart") => { let _ = cmd_stop(); a.remove(0); cmd_start(&a); return; }
+        Some("restart") => { let _ = cmd_stop(true); a.remove(0); cmd_start(&a); return; }
         Some("start") => { a.remove(0); cmd_start(&a); return; }
         Some("-h") | Some("--help") => usage(),
         _ => {}
@@ -525,11 +577,11 @@ fn main() {
         }
     };
     if waybar {
-        if color.to_lowercase() == "rainbow" { eprintln!("waybar: rainbow no tiene un color unico; se ignora --waybar"); waybar = false; }
+        if color.to_lowercase() == "rainbow" { eprintln!("waybar: rainbow no tiene un color unico; se ignora --waybar"); waybar_apply(None); waybar = false; }
         else { waybar_apply(parse_color(&color)); }
     }
     if fuzzel {
-        if color.to_lowercase() == "rainbow" { eprintln!("fuzzel: rainbow no tiene un color unico; se ignora --fuzzel"); fuzzel = false; }
+        if color.to_lowercase() == "rainbow" { eprintln!("fuzzel: rainbow no tiene un color unico; se ignora --fuzzel"); fuzzel_apply(None); fuzzel = false; }
         else { fuzzel_apply(parse_color(&color)); }
     }
     let chars = charset(&set);
@@ -541,7 +593,7 @@ fn main() {
     unsafe { malloc_trim(0); }
     // ya estan rasterizados los glifos; libera ~270 MB de la fuente CJK
 
-    unsafe { signal(2, on_signal as *const () as usize); signal(15, on_signal as *const () as usize); }
+    unsafe { signal(2, on_signal as *const () as usize); signal(15, on_signal as *const () as usize); signal(1, on_hup as *const () as usize); }
 
     let conn = Connection::connect_to_env().expect("no hay compositor Wayland");
     let (globals, event_queue) = registry_queue_init(&conn).unwrap();
@@ -591,6 +643,8 @@ fn main() {
         event_loop.dispatch(Some(Duration::from_millis(250)), &mut app).unwrap();
     }
     remove_own_pidfile();
-    if waybar { waybar_apply(None); } // vuelve al color por defecto
-    if fuzzel { fuzzel_apply(None); }
+    if !KEEP_THEME.load(Ordering::SeqCst) { // un restart deja los colores para el siguiente arranque
+        if waybar { waybar_apply(None); } // vuelve al color por defecto
+        if fuzzel { fuzzel_apply(None); }
+    }
 }

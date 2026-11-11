@@ -16,7 +16,7 @@ matrix-wayland start --foreground       # primer plano, para depurar
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`,
 `#rrggbb` o `rainbow`), `-s` caracteres (`mixed katakana binary digits hex`),
-`--fps N`, `--size PX`, `--font RUTA`, `--waybar` y `--fuzzel` (ver abajo).
+`--fps N`, `--size PX`, `--font RUTA`, `--waybar`/`--no-waybar` y `--fuzzel`/`--no-fuzzel` (ver abajo).
 
 ## Color de waybar (`--waybar`, opcional)
 
@@ -61,6 +61,14 @@ include=~/.config/fuzzel/matrix-colors.ini
 ```
 
 Se pueden combinar: `matrix-wayland start -c yellow --waybar --fuzzel`.
+
+### Las integraciones se recuerdan
+
+`--waybar` y `--fuzzel` son persistentes: se guardan en `~/.local/state/matrix-wayland/integrations`
+y se reaplican en cada `start`/`restart`, así que basta con `matrix-wayland restart -c cyan` para
+que la waybar y fuzzel sigan al color. Se apagan con `--no-waybar` / `--no-fuzzel` (restauran
+tus colores en el momento). `restart` no restaura los colores entre el proceso viejo y el nuevo;
+`stop` sí. Con `-c rainbow` se restauran los colores por defecto.
 
 ## Compilar e instalar
 
