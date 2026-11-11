@@ -16,7 +16,7 @@ matrix-wayland start --foreground       # primer plano, para depurar
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`,
 `#rrggbb` o `rainbow`), `-s` caracteres (`mixed katakana binary digits hex`),
-`--fps N`, `--size PX`, `--font RUTA`, `--waybar` (ver abajo).
+`--fps N`, `--size PX`, `--font RUTA`, `--waybar` y `--fuzzel` (ver abajo).
 
 ## Color de waybar (`--waybar`, opcional)
 
@@ -44,6 +44,23 @@ Pon esto al principio de tu `style.css` y usa las variables en lugar de colores 
 Crea antes el fichero vacío: `touch ~/.config/waybar/matrix-colors.css`. Después:
 `matrix-wayland start -c yellow --waybar`. La recarga reinicia los módulos de waybar un
 instante, así que solo ocurre al iniciar, reiniciar y parar.
+
+## Color de fuzzel (`--fuzzel`, opcional)
+
+Con `--fuzzel` escribe `~/.config/fuzzel/matrix-colors.ini` (`[colors]`: texto, borde y selección en
+el color elegido, fondo negro). Fuzzel lee su configuración al abrirse, así que no hay que recargar
+nada. Al parar, el fichero queda vacío y vuelven tus colores.
+
+Fuzzel solo admite `include` en `[main]` y gana el último valor definido, así que tus colores deben
+ir en un fichero aparte, incluido antes que el de matrix-wayland (el fichero debe existir):
+
+```ini
+# ~/.config/fuzzel/fuzzel.ini (arriba del todo, antes de cualquier [seccion])
+include=~/.config/fuzzel/colors-default.ini   # tu bloque [colors] de siempre
+include=~/.config/fuzzel/matrix-colors.ini
+```
+
+Se pueden combinar: `matrix-wayland start -c yellow --waybar --fuzzel`.
 
 ## Compilar e instalar
 

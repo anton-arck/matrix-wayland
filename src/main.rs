@@ -396,32 +396,65 @@ fn cmd_start(opts: &[String]) {
 
 // ---------- integracion con waybar (opt-in: --waybar) ----------
 fn waybar_css_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("waybar").join("matrix-colors.css"))
+    Some(config_dir()?.join("waybar").join("matrix-colors.css"))
 }
 
-/// Escribe el CSS de GTK con el color de acento (None = solo un comentario, para que
-/// el style.css use su color por defecto). Escritura atomica, y nunca sobre un symlink.
-fn write_waybar_css(accent: Option<[u8; 3]>) -> Result<(), String> {
-    let path = waybar_css_path().ok_or("no se pudo resolver ~/.config/waybar")?;
-    if let Ok(m) = std::fs::symlink_metadata(&path) {
+fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+}
+
+/// Escritura atomica (tmp + rename), y nunca sobre un symlink.
+fn atomic_write(path: &std::path::Path, body: &str) -> Result<(), String> {
+    if let Ok(m) = std::fs::symlink_metadata(path) {
         if m.file_type().is_symlink() { return Err(format!("{} es un symlink; no se toca", path.display())); }
     }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn hex(c: [u8; 3]) -> String { format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2]) }
+
+/// Escribe el CSS de GTK con los colores (None = solo un comentario, para que el
+/// style.css use sus colores por defecto).
+fn write_waybar_css(accent: Option<[u8; 3]>) -> Result<(), String> {
+    let path = waybar_css_path().ok_or("no se pudo resolver ~/.config/waybar")?;
     let body = match accent {
         Some(c) => format!(
             "/* generado por matrix-wayland */\n\
-             @define-color matrix_accent #{r:02x}{g:02x}{b:02x};\n\
-             @define-color matrix_fg #{r:02x}{g:02x}{b:02x};\n\
+             @define-color matrix_accent #{h};\n\
+             @define-color matrix_fg #{h};\n\
              @define-color matrix_bar_bg #000000;\n\
              @define-color matrix_mod_bg #000000;\n\
              @define-color matrix_mod_hover rgba({r},{g},{b},0.25);\n",
-            r = c[0], g = c[1], b = c[2]),
+            h = hex(c), r = c[0], g = c[1], b = c[2]),
         None => "/* generado por matrix-wayland: inactivo, se usa el color por defecto del style.css */\n".to_string(),
     };
-    let tmp = path.with_extension("css.tmp");
-    std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    atomic_write(&path, &body)
+}
+
+/// Tema de fuzzel (se lee al abrirlo: no hace falta recargar nada).
+fn write_fuzzel_ini(accent: Option<[u8; 3]>) -> Result<(), String> {
+    let path = config_dir().ok_or("no se pudo resolver ~/.config")?.join("fuzzel").join("matrix-colors.ini");
+    let body = match accent {
+        Some(c) => {
+            let mix = |f: f64| hex([(c[0] as f64 * f) as u8, (c[1] as f64 * f) as u8, (c[2] as f64 * f) as u8]);
+            let lite = hex([(c[0] as f64 + (255.0 - c[0] as f64) * 0.75) as u8, (c[1] as f64 + (255.0 - c[1] as f64) * 0.75) as u8, (c[2] as f64 + (255.0 - c[2] as f64) * 0.75) as u8]);
+            let a = hex(c);
+            format!(
+                "# generado por matrix-wayland\n[colors]\nbackground=000000ff\ntext={a}ff\nprompt={a}ff\ninput={a}ff\n\
+                 placeholder={p}ff\nmatch={lite}ff\nselection-match={lite}ff\nselection={a}40\nselection-text={a}ff\n\
+                 counter={p}ff\nborder={a}ff\n",
+                p = mix(0.55))
+        }
+        None => "# generado por matrix-wayland: inactivo, se usan los colores por defecto\n".to_string(),
+    };
+    atomic_write(&path, &body)
+}
+
+fn fuzzel_apply(accent: Option<[u8; 3]>) {
+    if let Err(e) = write_fuzzel_ini(accent) { eprintln!("fuzzel: {e}"); }
 }
 
 /// SIGUSR2 hace que waybar recargue config y estilo. Solo a procesos nuestros.
@@ -444,7 +477,7 @@ fn waybar_apply(accent: Option<[u8; 3]>) {
 }
 
 fn usage() -> ! {
-    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA] [--waybar]
+    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA] [--waybar] [--fuzzel]
   sin subcomando = start. --foreground lo deja en primer plano.");
     std::process::exit(2)
 }
@@ -467,10 +500,11 @@ fn main() {
     }
     if a.first().map(String::as_str) == Some("--foreground") { foreground = true; a.remove(0); }
     if !foreground { cmd_start(&a); return; }
-    let mut waybar = false;
+    let (mut waybar, mut fuzzel) = (false, false);
     let mut i = 0;
     while i < a.len() {
         if a[i] == "--waybar" { waybar = true; i += 1; continue; }
+        if a[i] == "--fuzzel" { fuzzel = true; i += 1; continue; }
         let val = a.get(i + 1).cloned();
         match a[i].as_str() {
             "-c" => color = val.unwrap_or_else(|| usage()),
@@ -493,6 +527,10 @@ fn main() {
     if waybar {
         if color.to_lowercase() == "rainbow" { eprintln!("waybar: rainbow no tiene un color unico; se ignora --waybar"); waybar = false; }
         else { waybar_apply(parse_color(&color)); }
+    }
+    if fuzzel {
+        if color.to_lowercase() == "rainbow" { eprintln!("fuzzel: rainbow no tiene un color unico; se ignora --fuzzel"); fuzzel = false; }
+        else { fuzzel_apply(parse_color(&color)); }
     }
     let chars = charset(&set);
     let data = std::fs::read(&font_path).unwrap_or_else(|e| { eprintln!("no se pudo leer la fuente {font_path}: {e}"); std::process::exit(1) });
@@ -554,4 +592,5 @@ fn main() {
     }
     remove_own_pidfile();
     if waybar { waybar_apply(None); } // vuelve al color por defecto
+    if fuzzel { fuzzel_apply(None); }
 }
