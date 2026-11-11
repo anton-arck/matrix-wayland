@@ -335,6 +335,14 @@ fn write_pidfile(pid: u32) -> bool {
         .is_ok()
 }
 
+/// Borra el pidfile solo si pertenece a este proceso (no el de otra instancia).
+fn remove_own_pidfile() {
+    let path = pidfile();
+    if std::fs::read_to_string(&path).ok().and_then(|t| t.trim().parse::<u32>().ok()) == Some(std::process::id()) {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 /// PID del proceso en marcha, si el pidfile es nuestro, valido y no esta obsoleto.
 fn running_pid() -> Option<i32> {
     let path = pidfile();
@@ -489,5 +497,5 @@ fn main() {
     while !app.exit && !STOP.load(Ordering::SeqCst) {
         event_loop.dispatch(Some(Duration::from_millis(250)), &mut app).unwrap();
     }
-    let _ = std::fs::remove_file(pidfile());
+    remove_own_pidfile();
 }
