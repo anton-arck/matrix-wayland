@@ -1,6 +1,7 @@
 //! Efecto Matrix como fondo de pantalla Wayland (wlr-layer-shell + wl_shm).
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -305,19 +306,42 @@ extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
     fn signal(sig: i32, handler: usize) -> usize;
     fn setsid() -> i32;
+    fn geteuid() -> u32;
 }
 
 static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn on_signal(_: i32) { STOP.store(true, Ordering::SeqCst); }
 
+/// El pidfile vive en $XDG_RUNTIME_DIR (privado del usuario, 0700). Sin respaldo a /tmp.
 fn pidfile() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
-    dir.join("matrix-wayland.pid")
+    match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) {
+        Some(d) if d.is_absolute() => d.join("matrix-wayland.pid"),
+        _ => { eprintln!("XDG_RUNTIME_DIR no esta definido; no se puede gestionar el pidfile"); std::process::exit(1) }
+    }
 }
 
-/// PID del proceso en marcha, si el pidfile es valido y no esta obsoleto.
+fn write_pidfile(pid: u32) -> bool {
+    let path = pidfile();
+    // nunca seguir un symlink ni reutilizar un fichero ajeno
+    if let Ok(m) = std::fs::symlink_metadata(&path) {
+        if m.file_type().is_symlink() || m.uid() != unsafe { geteuid() } {
+            eprintln!("pidfile sospechoso ({}); no se toca", path.display());
+            return false;
+        }
+    }
+    std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600)
+        .open(&path)
+        .and_then(|mut f| { use std::io::Write; write!(f, "{pid}") })
+        .is_ok()
+}
+
+/// PID del proceso en marcha, si el pidfile es nuestro, valido y no esta obsoleto.
 fn running_pid() -> Option<i32> {
-    let pid: i32 = std::fs::read_to_string(pidfile()).ok()?.trim().parse().ok()?;
+    let path = pidfile();
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if meta.file_type().is_symlink() || meta.uid() != unsafe { geteuid() } { return None; }
+    let pid: i32 = std::fs::read_to_string(&path).ok()?.trim().parse().ok()?;
+    if pid <= 1 { return None; }
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
     if comm.trim() == "matrix-wayland" { Some(pid) } else { None }
 }
@@ -344,7 +368,12 @@ fn cmd_start(opts: &[String]) {
     c.arg("--foreground").args(opts).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
     unsafe { c.pre_exec(|| { setsid(); Ok(()) }); }
     let mut child = c.spawn().expect("no se pudo lanzar");
-    let _ = std::fs::write(pidfile(), child.id().to_string()); // ya, no cuando termine de arrancar
+    if !write_pidfile(child.id()) { // ya, no cuando termine de arrancar
+        let _ = child.kill(); // sin pidfile no habria forma de pararlo con `stop`
+        let _ = child.wait();
+        eprintln!("no se pudo registrar el pidfile; cancelado");
+        std::process::exit(1);
+    }
     // si falla al arrancar (opcion/color invalido, sin layer-shell...) lo decimos
     std::thread::sleep(Duration::from_millis(1500));
     if let Ok(Some(_)) = child.try_wait() {
