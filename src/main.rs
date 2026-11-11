@@ -394,8 +394,50 @@ fn cmd_start(opts: &[String]) {
     println!("iniciado (pid {})", child.id());
 }
 
+// ---------- integracion con waybar (opt-in: --waybar) ----------
+fn waybar_css_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("waybar").join("matrix-colors.css"))
+}
+
+/// Escribe el CSS de GTK con el color de acento (None = solo un comentario, para que
+/// el style.css use su color por defecto). Escritura atomica, y nunca sobre un symlink.
+fn write_waybar_css(accent: Option<[u8; 3]>) -> Result<(), String> {
+    let path = waybar_css_path().ok_or("no se pudo resolver ~/.config/waybar")?;
+    if let Ok(m) = std::fs::symlink_metadata(&path) {
+        if m.file_type().is_symlink() { return Err(format!("{} es un symlink; no se toca", path.display())); }
+    }
+    let body = match accent {
+        Some(c) => format!("/* generado por matrix-wayland */\n@define-color matrix_accent #{:02x}{:02x}{:02x};\n", c[0], c[1], c[2]),
+        None => "/* generado por matrix-wayland: inactivo, se usa el color por defecto del style.css */\n".to_string(),
+    };
+    let tmp = path.with_extension("css.tmp");
+    std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// SIGUSR2 hace que waybar recargue config y estilo. Solo a procesos nuestros.
+fn reload_waybar() {
+    let me = unsafe { geteuid() };
+    let Ok(rd) = std::fs::read_dir("/proc") else { return };
+    for e in rd.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else { continue };
+        let owned = e.metadata().map(|m| m.uid() == me).unwrap_or(false);
+        let is_waybar = std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim() == "waybar").unwrap_or(false);
+        if owned && is_waybar { unsafe { kill(pid, 12) }; }
+    }
+}
+
+fn waybar_apply(accent: Option<[u8; 3]>) {
+    match write_waybar_css(accent) {
+        Ok(()) => reload_waybar(),
+        Err(e) => eprintln!("waybar: {e}"),
+    }
+}
+
 fn usage() -> ! {
-    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA]
+    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA] [--waybar]
   sin subcomando = start. --foreground lo deja en primer plano.");
     std::process::exit(2)
 }
@@ -418,8 +460,10 @@ fn main() {
     }
     if a.first().map(String::as_str) == Some("--foreground") { foreground = true; a.remove(0); }
     if !foreground { cmd_start(&a); return; }
+    let mut waybar = false;
     let mut i = 0;
     while i < a.len() {
+        if a[i] == "--waybar" { waybar = true; i += 1; continue; }
         let val = a.get(i + 1).cloned();
         match a[i].as_str() {
             "-c" => color = val.unwrap_or_else(|| usage()),
@@ -439,6 +483,10 @@ fn main() {
             None => { eprintln!("color invalido: {color:?}"); std::process::exit(2) }
         }
     };
+    if waybar {
+        if color.to_lowercase() == "rainbow" { eprintln!("waybar: rainbow no tiene un color unico; se ignora --waybar"); waybar = false; }
+        else { waybar_apply(parse_color(&color)); }
+    }
     let chars = charset(&set);
     let data = std::fs::read(&font_path).unwrap_or_else(|e| { eprintln!("no se pudo leer la fuente {font_path}: {e}"); std::process::exit(1) });
     let font = fontdue::Font::from_bytes(data, fontdue::FontSettings { scale: size, ..Default::default() })
@@ -498,4 +546,5 @@ fn main() {
         event_loop.dispatch(Some(Duration::from_millis(250)), &mut app).unwrap();
     }
     remove_own_pidfile();
+    if waybar { waybar_apply(None); } // vuelve al color por defecto
 }

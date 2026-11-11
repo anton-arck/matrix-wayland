@@ -16,7 +16,26 @@ matrix-wayland start --foreground       # primer plano, para depurar
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`,
 `#rrggbb` o `rainbow`), `-s` caracteres (`mixed katakana binary digits hex`),
-`--fps N`, `--size PX`, `--font RUTA`.
+`--fps N`, `--size PX`, `--font RUTA`, `--waybar` (ver abajo).
+
+## Color de waybar (`--waybar`, opcional)
+
+Con `--waybar`, matrix-wayland escribe su color en `~/.config/waybar/matrix-colors.css`
+(`@define-color matrix_accent #rrggbb;`) y manda `SIGUSR2` a waybar para recargar el estilo.
+Al parar, vuelve al color por defecto. Con `-c rainbow` se ignora (no hay un color único).
+
+Añade esto al principio de tu `style.css` y usa `alpha(@matrix_accent, X)` donde quieras el color:
+
+```css
+@define-color matrix_accent #81a1c1;   /* color por defecto cuando matrix-wayland no corre */
+@import "matrix-colors.css";           /* el fichero debe existir; puede estar vacío */
+
+#clock, #cpu, #memory { background: alpha(@matrix_accent, 0.4); }
+```
+
+Crea antes el fichero vacío: `touch ~/.config/waybar/matrix-colors.css`. Después:
+`matrix-wayland start -c purple --waybar`. La recarga de waybar reinicia sus módulos un instante,
+así que solo ocurre al iniciar, reiniciar y parar.
 
 ## Compilar e instalar
 
@@ -41,6 +60,10 @@ Misma lógica en cuatro implementaciones, pantalla 1366x768 (sway). CPU en régi
 
 Las cifras de Python/Go/Rust en terminal se midieron con un pty de 200x50, y la de
 matrix-wayland con `/proc/<pid>/stat` a 15 FPS; no son comparables al 100 %.
+
+## Licencia
+
+GPL-3.0-or-later. Ver [LICENSE](LICENSE).
 
 ## Limitaciones
 
