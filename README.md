@@ -5,16 +5,24 @@ color que elijas. Cliente nativo en Rust que usa
 `wlr-layer-shell` (capa `background`) y pinta por CPU con `wl_shm`: sin GPU, sin
 terminal y sin XWayland.
 
+![pacman](docs/pacman.gif)
+
 ## Escenas
 
 El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas (`-c`):
 
 - **`matrix`** (por defecto): lluvia de caracteres.
+
+  ![matrix](docs/matrix.png)
+
 - **`galaga`**: un shoot'em up inspirado en Galaga que **se juega solo**. Sprites propios (pixel art),
   formación de enemigos con entradas en curva y picados, y una IA que apunta, dispara y esquiva
   (con tiempo de reacción, así que a veces pierde y la partida se reinicia sola). Tres tipos de
   enemigo y la nave en el color elegido; con `-c rainbow`, un color distinto por tipo.
   `--hud` muestra puntuación, nivel y vidas abajo del todo.
+
+  ![galaga](docs/galaga.gif)
+
 - **`pacman`**: un Pac-Man inspirado que **se juega solo** en un laberinto **generado
   proceduralmente** (simétrico, conexo y sin callejones sin salida), adaptado al tamaño de la
   pantalla y distinto en cada nivel. Cuatro fantasmas con personalidades (persecución, emboscada
@@ -22,6 +30,8 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   fantasmas, va a por las pastillas de poder cuando se ve acorralada y persigue fantasmas
   asustados. Con `-c rainbow` usa los colores clásicos (laberinto azul, Pac-Man amarillo).
   `--hud` muestra puntuación, nivel y vidas; `--scale N` fija el tamaño de casilla en píxeles.
+
+  ![pacman con rainbow](docs/pacman-rainbow.png)
 
 ## Uso
 
@@ -45,6 +55,9 @@ escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apag
 `--reset` olvida todo y vuelve a los valores por defecto.
 
 ## Color de waybar (`--waybar`, opcional)
+
+En todas las capturas, la barra de arriba sigue el color del fondo (texto e iconos en el color
+elegido sobre negro).
 
 Con `--waybar`, matrix-wayland escribe en `~/.config/waybar/matrix-colors.css` las variables
 `matrix_fg` (texto e iconos = el color elegido), `matrix_bar_bg` y `matrix_mod_bg` (negro),
@@ -76,6 +89,8 @@ instante, así que solo ocurre al iniciar, reiniciar y parar.
 Con `--fuzzel` escribe `~/.config/fuzzel/matrix-colors.ini` (`[colors]`: texto, borde y selección en
 el color elegido, fondo negro). Fuzzel lee su configuración al abrirse, así que no hay que recargar
 nada. Al parar, el fichero queda vacío y vuelven tus colores.
+
+![fuzzel con el tema de matrix-wayland](docs/fuzzel.png)
 
 Fuzzel solo admite `include` en `[main]` y gana el último valor definido, así que tus colores deben
 ir en un fichero aparte, incluido antes que el de matrix-wayland (el fichero debe existir):
