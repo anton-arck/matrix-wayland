@@ -32,6 +32,15 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   `--hud` muestra puntuación, nivel y vidas; `--scale N` fija el tamaño de casilla en píxeles.
 
   ![pacman con rainbow](docs/pacman-rainbow.png)
+- **`snake`**: una serpiente que **se juega sola** siguiendo un ciclo hamiltoniano del tablero (nunca
+  muere) y tomando atajos seguros hacia la comida. Crece hasta llenar el 75 % y reinicia.
+
+  ![snake con rainbow](docs/snake.png)
+
+- **`tron`**: motos de luz que se pelean solas. Cada una deja una estela de neón y esquiva eligiendo el
+  giro con más espacio libre; gana la última en pie (con `rainbow`, cuatro motos de colores).
+
+  ![tron con rainbow](docs/tron.png)
 
 ## Uso
 
@@ -45,9 +54,9 @@ matrix-wayland start --foreground            # primer plano, para depurar
 ```
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `#rrggbb` o
-`rainbow`), `--scene matrix|galaga|pacman`, `--fps N` (matrix 15, galaga y pacman 30), `-s` caracteres
+`rainbow`), `--scene matrix|galaga|pacman|snake|tron`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
-`--scale N` (galaga: píxeles por píxel de sprite; pacman: píxeles por casilla; por defecto según la pantalla), `--hud`,
+`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; por defecto según la pantalla), `--hud`,
 `--waybar` y `--fuzzel` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
@@ -140,6 +149,7 @@ Escena matrix en distintas implementaciones (y galaga al final), pantalla 1366x7
 | **matrix-wayland, escena matrix (wl_shm, 15 FPS)** | **~4,3 %**, ~13 MB de RAM |
 | **matrix-wayland, escena galaga (wl_shm, 30 FPS)** | **~6,6 %**, ~11 MB de RAM |
 | **matrix-wayland, escena pacman (wl_shm, 30 FPS)** | **~7,9 %**, ~16 MB de RAM |
+| **matrix-wayland, escenas snake / tron (wl_shm, 30 FPS)** | **~6-7 %**, ~12 MB de RAM |
 
 Las cifras de Python/Go/Rust en terminal se midieron con un pty de 200x50, y la de
 matrix-wayland con `/proc/<pid>/stat`; no son comparables al 100 %.

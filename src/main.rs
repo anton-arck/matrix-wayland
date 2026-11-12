@@ -1,6 +1,8 @@
 //! Efecto Matrix como fondo de pantalla Wayland (wlr-layer-shell + wl_shm).
 mod galaga;
 mod pacman;
+mod snake;
+mod tron;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -609,12 +611,12 @@ fn waybar_apply(accent: Option<[u8; 3]>) {
 fn usage() -> ! {
     eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
   -c COLOR          green cyan magenta pink blue purple orange yellow red | #rrggbb | rainbow
-  --scene NOMBRE    matrix (por defecto) | galaga | pacman
+  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron
   -s CARACTERES     (matrix) mixed katakana binary digits hex
-  --fps N           fotogramas por segundo (matrix 15, galaga y pacman 30)
+  --fps N           fotogramas por segundo (matrix 15, el resto 30)
   --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
-  --scale N         (galaga) pixeles por pixel de sprite; (pacman) pixeles por casilla (por defecto, segun la pantalla)
-  --hud             (galaga, pacman) puntuacion, nivel y vidas
+  --scale N         (galaga) pixeles por pixel de sprite; (pacman, snake, tron) pixeles por casilla (por defecto, segun la pantalla)
+  --hud             (galaga, pacman, snake, tron) puntuacion, nivel/ronda y vidas
   --waybar / --fuzzel      el color tambien en waybar / fuzzel
   --no-waybar --no-fuzzel --no-hud   apagan una bandera
   --reset           olvida las opciones recordadas
@@ -663,7 +665,7 @@ fn main() {
         }
         i += 2;
     }
-    if !["matrix", "galaga", "pacman"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman)"); std::process::exit(2) }
+    if !["matrix", "galaga", "pacman", "snake", "tron"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron)"); std::process::exit(2) }
     if fps <= 0.0 { fps = if scene_name == "matrix" { 15.0 } else { 30.0 }; }
     let pals: Vec<Pal> = if color.to_lowercase() == "rainbow" {
         NEON.iter().map(|(_, c)| make_pal(*c)).collect()
@@ -686,6 +688,10 @@ fn main() {
         (Painter::plain(), Box::new(galaga::Galaga::new(pals, scale, hud)))
     } else if scene_name == "pacman" {
         (Painter::plain(), Box::new(pacman::Pacman::new(pals, scale, hud)))
+    } else if scene_name == "snake" {
+        (Painter::plain(), Box::new(snake::Snake::new(pals, scale, hud)))
+    } else if scene_name == "tron" {
+        (Painter::plain(), Box::new(tron::Tron::new(pals, scale, hud)))
     } else {
         let data = std::fs::read(&font_path).unwrap_or_else(|e| { eprintln!("no se pudo leer la fuente {font_path}: {e}"); std::process::exit(1) });
         let font = fontdue::Font::from_bytes(data, fontdue::FontSettings { scale: size, ..Default::default() })
