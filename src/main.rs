@@ -464,6 +464,40 @@ fn resolve_options(opts: &[String]) -> Vec<String> {
     rest
 }
 
+/// Aplica (o quita) el color de waybar/fuzzel sin ninguna escena en marcha.
+fn cmd_theme(opts: &[String]) {
+    if let Some(pid) = running_pid() {
+        eprintln!("hay una escena en marcha (pid {pid}); usa `matrix-wayland restart -c COLOR` para cambiar el color");
+        std::process::exit(1);
+    }
+    if opts.iter().any(|o| o == "--off") {
+        waybar_apply(None);
+        fuzzel_apply(None);
+        println!("colores de waybar y fuzzel restaurados");
+        return;
+    }
+    let resolved = resolve_options(opts);
+    let (mut color, mut wb, mut fz) = ("green".to_string(), false, false);
+    let mut it = resolved.iter();
+    while let Some(o) = it.next() {
+        match o.as_str() {
+            "-c" => if let Some(v) = it.next() { color = v.clone(); },
+            "--waybar" => wb = true,
+            "--fuzzel" => fz = true,
+            _ => {}
+        }
+    }
+    if !wb && !fz { eprintln!("nada que aplicar: usa --waybar y/o --fuzzel (se recuerdan para la proxima vez)"); std::process::exit(1); }
+    let rgb = if color.to_lowercase() == "rainbow" { None } else { parse_color(&color) };
+    if rgb.is_none() {
+        eprintln!("el color {color:?} no sirve para el tema (use un nombre neon o #rrggbb; rainbow no tiene un color unico)");
+        std::process::exit(2);
+    }
+    if wb { waybar_apply(rgb); }
+    if fz { fuzzel_apply(rgb); }
+    println!("tema {color} aplicado{}{}", if wb { " a waybar" } else { "" }, if fz { " y fuzzel" } else { "" });
+}
+
 fn cmd_start(opts: &[String]) {
     if let Some(pid) = running_pid() { eprintln!("ya esta en marcha (pid {pid}); usa `matrix-wayland restart`"); std::process::exit(1); }
     let opts = &resolve_options(opts);
@@ -584,7 +618,9 @@ fn usage() -> ! {
   --waybar / --fuzzel      el color tambien en waybar / fuzzel
   --no-waybar --no-fuzzel --no-hud   apagan una bandera
   --reset           olvida las opciones recordadas
-Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: primer plano.");
+Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: primer plano.
+  stop --keep-theme  apaga la escena y deja los colores de waybar/fuzzel
+  theme [-c COLOR]   aplica el color a waybar/fuzzel sin escena (theme --off los restaura)");
     std::process::exit(2)
 }
 
@@ -595,7 +631,8 @@ fn main() {
     let mut a: Vec<String> = std::env::args().skip(1).collect();
     let mut foreground = false;
     match a.first().map(String::as_str) {
-        Some("stop") => std::process::exit(if cmd_stop(false) { 0 } else { 1 }),
+        Some("stop") => { let keep = a.iter().any(|x| x == "--keep-theme"); std::process::exit(if cmd_stop(keep) { 0 } else { 1 }) }
+        Some("theme") => { a.remove(0); cmd_theme(&a); return; }
         Some("status") => match running_pid() {
             Some(pid) => { println!("en marcha (pid {pid})"); std::process::exit(0) }
             None => { println!("detenido"); std::process::exit(3) }

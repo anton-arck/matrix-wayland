@@ -54,6 +54,21 @@ Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apagan una bandera, y
 `--reset` olvida todo y vuelve a los valores por defecto.
 
+### Solo los colores, sin escena
+
+`stop` restaura los colores de waybar y fuzzel. Para apagar la escena y **dejarlos puestos**:
+
+```
+matrix-wayland stop --keep-theme      # apaga la escena, waybar y fuzzel conservan el color
+matrix-wayland theme                  # reaplica lo recordado (p. ej. tras reiniciar el equipo)
+matrix-wayland theme -c cyan          # cambia el color sin ninguna escena
+matrix-wayland theme --off            # restaura los colores originales
+```
+
+`theme` usa las banderas recordadas (`--waybar`/`--fuzzel`); si hay una escena en marcha, se niega
+(usa `restart -c COLOR`). Para que el color aparezca al iniciar sesión sin lanzar la escena, pon
+`exec matrix-wayland theme` en tu configuración de sway.
+
 ## Color de waybar (`--waybar`, opcional)
 
 En todas las capturas, la barra de arriba sigue el color del fondo (texto e iconos en el color
