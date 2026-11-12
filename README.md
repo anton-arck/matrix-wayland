@@ -32,8 +32,10 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   `--hud` muestra puntuación, nivel y vidas; `--scale N` fija el tamaño de casilla en píxeles.
 
   ![pacman con rainbow](docs/pacman-rainbow.png)
-- **`snake`**: una serpiente que **se juega sola** siguiendo un ciclo hamiltoniano del tablero (nunca
-  muere) y tomando atajos seguros hacia la comida. Crece hasta llenar el 75 % y reinicia.
+- **`snake`**: cinco serpientes que **se juegan solas**, cada una en su carril y con su propia comida,
+  siguiendo un ciclo hamiltoniano (nunca mueren) y tomando atajos seguros. Cada una crece hasta llenar el
+  75 % de su carril y reinicia por separado, así la pantalla se va llenando por completo. Con `rainbow`,
+  cada serpiente tiene su color.
 
   ![snake con rainbow](docs/snake.png)
 

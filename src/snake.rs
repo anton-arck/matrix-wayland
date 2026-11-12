@@ -1,6 +1,6 @@
-//! Escena "snake": una serpiente que se juega sola siguiendo un ciclo hamiltoniano del
-//! tablero (nunca muere) y tomando atajos seguros hacia la comida. Crece hasta llenar
-//! buena parte de la pantalla y reinicia.
+//! Escena "snake": varias serpientes (una por carril, cada una con su comida) que se juegan
+//! solas siguiendo un ciclo hamiltoniano de su carril (nunca mueren) y tomando atajos seguros.
+//! Cada una crece hasta llenar buena parte de su carril y reinicia por separado.
 use super::{Painter, Pal, Rng, Scene};
 use crate::galaga::glyph;
 use std::collections::VecDeque;
@@ -29,12 +29,12 @@ fn hamiltonian(gw: i32, gh: i32) -> Vec<(i32, i32)> {
     c
 }
 
-pub struct Snake {
-    hud: bool,
-    t_arg: i32,
-    pals: Vec<Pal>,
-    rng: Rng,
-    t: i32, ox: i32, oy: i32, gw: i32, gh: i32, wpx: i32, hpx: i32,
+const LANES: usize = 5;
+/// Orden de colores en rainbow (indices de NEON): cian, naranja, magenta, amarillo, verde.
+const LANE_PAL: [usize; LANES] = [1, 6, 2, 7, 0];
+
+struct Lane {
+    ox: i32, oy: i32, gw: i32, gh: i32,
     cyc: Vec<(i32, i32)>,
     idx: Vec<u32>,
     body: VecDeque<(i32, i32)>, // frente = cola, fondo = cabeza
@@ -44,50 +44,37 @@ pub struct Snake {
     pause: f32,
     score: u32,
     games: u32,
-    t_all: f32,
 }
 
-impl Snake {
-    pub fn new(pals: Vec<Pal>, tile: i32, hud: bool) -> Self {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
-        Snake {
-            hud, t_arg: tile, pals, rng: Rng(seed | 1), t: 20, ox: 0, oy: 0, gw: 0, gh: 0, wpx: 0, hpx: 0,
-            cyc: vec![], idx: vec![], body: VecDeque::new(), occ: vec![], food: (0, 0),
-            acc: 0.0, pause: 0.0, score: 0, games: 1, t_all: 0.0,
-        }
+impl Lane {
+    fn new(ox: i32, oy: i32, gw: i32, gh: i32, rng: &mut Rng) -> Self {
+        let cyc = hamiltonian(gw, gh);
+        let mut idx = vec![0; cyc.len()];
+        for (i, &(x, y)) in cyc.iter().enumerate() { idx[(y * gw + x) as usize] = i as u32; }
+        let mut l = Lane { ox, oy, gw, gh, cyc, idx, body: VecDeque::new(), occ: vec![], food: (0, 0), acc: 0.0, pause: 0.0, score: 0, games: 0 };
+        l.restart(rng);
+        l
     }
 
     fn n(&self) -> usize { self.cyc.len() }
     fn at(&self, x: i32, y: i32) -> usize { (y * self.gw + x) as usize }
 
-    fn reset_game(&mut self) {
-        let hud_h = if self.hud { self.hpx / 12 } else { 0 };
-        let mut gw = (self.wpx / self.t).max(4);
-        let mut gh = ((self.hpx - hud_h) / self.t).max(4);
-        gh -= gh % 2;
-        gw -= gw % 2;
-        self.gw = gw; self.gh = gh;
-        self.ox = (self.wpx - gw * self.t) / 2;
-        self.oy = (self.hpx - hud_h - gh * self.t) / 2;
-        self.cyc = hamiltonian(gw, gh);
-        self.idx = vec![0; self.cyc.len()];
-        for (i, &(x, y)) in self.cyc.iter().enumerate() { let a = self.at(x, y); self.idx[a] = i as u32; }
-        self.occ = vec![false; self.cyc.len()];
+    fn restart(&mut self, rng: &mut Rng) {
+        self.occ = vec![false; self.n()];
         self.body.clear();
-        let start = self.cyc[self.rng.range(0, self.n() as i32 - 1) as usize];
+        let start = self.cyc[rng.range(0, self.n() as i32 - 1) as usize];
         self.body.push_back(start);
         let a = self.at(start.0, start.1);
         self.occ[a] = true;
-        self.score = 0;
         self.acc = 0.0;
         self.pause = 0.0;
-        self.place_food();
+        self.place_food(rng);
     }
 
-    fn place_food(&mut self) {
+    fn place_food(&mut self, rng: &mut Rng) {
         let free = self.n() - self.body.len();
         if free == 0 { return; }
-        let mut k = self.rng.range(0, free as i32 - 1);
+        let mut k = rng.range(0, free as i32 - 1);
         for i in 0..self.n() {
             let (x, y) = self.cyc[i];
             if !self.occ[self.at(x, y)] {
@@ -98,7 +85,7 @@ impl Snake {
     }
 
     /// Un paso: sigue el ciclo o toma el mayor atajo que no cruce el cuerpo ni se pase de la comida.
-    fn tick(&mut self) {
+    fn tick(&mut self, rng: &mut Rng) {
         let n = self.n() as i64;
         let head = *self.body.back().unwrap();
         let tail = *self.body.front().unwrap();
@@ -120,7 +107,7 @@ impl Snake {
         self.occ[a] = true;
         if next == self.food {
             self.score += 1;
-            if self.body.len() < self.n() { self.place_food(); }
+            if self.body.len() < self.n() { self.place_food(rng); }
         } else {
             let t = self.body.pop_front().unwrap();
             let a = self.at(t.0, t.1);
@@ -128,11 +115,10 @@ impl Snake {
         }
     }
 
-    fn update(&mut self, dt: f32) {
-        self.t_all += dt;
+    fn update(&mut self, dt: f32, rng: &mut Rng) {
         if self.pause > 0.0 {
             self.pause -= dt;
-            if self.pause <= 0.0 { self.games += 1; self.reset_game(); }
+            if self.pause <= 0.0 { self.games += 1; self.score = 0; self.restart(rng); }
             return;
         }
         let rate = 30.0 + self.body.len() as f32 * 0.05;
@@ -141,43 +127,84 @@ impl Snake {
         while self.acc >= 1.0 && steps < 16 {
             self.acc -= 1.0;
             steps += 1;
-            self.tick();
+            self.tick(rng);
             if self.body.len() * 4 >= self.n() * 3 { self.pause = 2.5; break; }
         }
         if steps == 16 { self.acc = 0.0; }
+    }
+}
+
+pub struct Snake {
+    hud: bool,
+    t_arg: i32,
+    pals: Vec<Pal>,
+    rng: Rng,
+    t: i32, wpx: i32, hpx: i32, ox: i32, gw_all: i32,
+    lanes: Vec<Lane>,
+    t_all: f32,
+}
+
+impl Snake {
+    pub fn new(pals: Vec<Pal>, tile: i32, hud: bool) -> Self {
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
+        Snake { hud, t_arg: tile, pals, rng: Rng(seed | 1), t: 20, wpx: 0, hpx: 0, ox: 0, gw_all: 0, lanes: vec![], t_all: 0.0 }
+    }
+
+    fn reset_game(&mut self) {
+        let hud_h = if self.hud { self.hpx / 12 } else { 0 };
+        let cols = (self.wpx / self.t).max(4);
+        let mut rows = ((self.hpx - hud_h) / self.t).max(4);
+        rows -= rows % 2;
+        // carriles verticales separados por una columna libre; menos carriles si la pantalla es pequena
+        let mut n = LANES as i32;
+        while n > 1 && (cols - (n - 1)) / n < 4 { n -= 1; }
+        let lw = ((cols - (n - 1)) / n).max(2);
+        let total = n * lw + (n - 1);
+        let x0 = (self.wpx - total * self.t) / 2;
+        let oy = (self.hpx - hud_h - rows * self.t) / 2;
+        self.ox = x0;
+        self.gw_all = total;
+        self.lanes.clear();
+        for i in 0..n {
+            let l = Lane::new(x0 + i * (lw + 1) * self.t, oy, lw, rows, &mut self.rng);
+            self.lanes.push(l);
+        }
+    }
+
+    fn update(&mut self, dt: f32) {
+        self.t_all += dt;
+        for l in &mut self.lanes { l.update(dt, &mut self.rng); }
     }
 
     fn render(&self, p: &mut Painter) {
         p.clear();
         let t = self.t;
         let inset = if t >= 8 { 1 } else { 0 };
-        let cell = |p: &mut Painter, x: i32, y: i32, c: u32| p.rect(self.ox + x * t + inset, self.oy + y * t + inset, t - 2 * inset, t - 2 * inset, c);
-        let len = self.body.len();
-        let blink = self.pause > 0.0 && (self.t_all * 6.0) as i32 % 2 == 0;
-        for (i, &(x, y)) in self.body.iter().enumerate() {
-            let pal = |k: usize| &self.pals[k % self.pals.len()];
-            let c = if i + 1 == len { pal(0).head }
-                else if self.pals.len() >= 9 { pal(i / 3).bands[0] }
-                else {
-                    let f = i * 3 / len.max(1);
-                    pal(0).bands[match f { 2 => 0, 1 => 1, _ => 2 }]
-                };
-            cell(p, x, y, if blink { self.pals[0].head } else { c });
-        }
-        if self.body.len() < self.n() {
-            let pulse = (self.t_all * 5.0).sin() * 0.5 + 0.5;
-            let s = (t as f32 * (0.35 + 0.25 * pulse)) as i32;
-            let (fx, fy) = self.food;
-            let c = if pulse > 0.5 { self.pals[0].head } else { self.pals[0].bands[0] };
-            p.rect(self.ox + fx * t + (t - s) / 2, self.oy + fy * t + (t - s) / 2, s, s, c);
+        for (li, l) in self.lanes.iter().enumerate() {
+            let pal = if self.pals.len() >= 9 { &self.pals[LANE_PAL[li % LANES]] } else { &self.pals[0] };
+            let len = l.body.len();
+            let blink = l.pause > 0.0 && (self.t_all * 6.0) as i32 % 2 == 0;
+            for (i, &(x, y)) in l.body.iter().enumerate() {
+                let c = if i + 1 == len { pal.head }
+                    else { pal.bands[match i * 3 / len.max(1) { 2 => 0, 1 => 1, _ => 2 }] };
+                p.rect(l.ox + x * t + inset, l.oy + y * t + inset, t - 2 * inset, t - 2 * inset, if blink { pal.head } else { c });
+            }
+            if len < l.n() {
+                let pulse = (self.t_all * 5.0 + li as f32).sin() * 0.5 + 0.5;
+                let s = (t as f32 * (0.35 + 0.25 * pulse)) as i32;
+                let (fx, fy) = l.food;
+                p.rect(l.ox + fx * t + (t - s) / 2, l.oy + fy * t + (t - s) / 2, s, s, if pulse > 0.5 { pal.head } else { pal.bands[0] });
+            }
         }
         if self.hud {
             let u = (self.hpx / 300).max(2);
             let y = self.hpx - 8 * u - 8;
             let c = self.pals[0].bands[1];
-            text(p, &format!("SCORE {:05}", self.score), self.ox + 8, y, u, c);
-            let g = format!("GAME {}", self.games);
-            text(p, &g, self.ox + self.gw * t - (g.len() as i32 * 4) * u - 8, y, u, c);
+            let score: u32 = self.lanes.iter().map(|l| l.score).sum();
+            let games: u32 = self.lanes.iter().map(|l| l.games).sum();
+            text(p, &format!("SCORE {:05}", score), self.ox + 8, y, u, c);
+            let g = format!("GAME {}", games + 1);
+            text(p, &g, self.ox + self.gw_all * t - (g.len() as i32 * 4) * u - 8, y, u, c);
         }
     }
 }
@@ -218,15 +245,18 @@ mod tests {
     fn long_simulation() {
         let mut s = Snake::new(vec![crate::make_pal([0, 255, 0])], 0, true);
         let mut p = Painter::plain();
-        for &(w, h) in &[(640usize, 360usize), (1920, 1080), (200, 120)] {
+        for &(w, h) in &[(640usize, 360usize), (1920, 1080), (200, 120), (60, 60)] {
             s.resize(&mut p, w, h);
-            for _ in 0..20000 { s.step(&mut p, 1.0 / 30.0); }
-            // invariante: el cuerpo es contiguo sin repeticiones
-            let cells: std::collections::HashSet<_> = s.body.iter().collect();
-            assert_eq!(cells.len(), s.body.len());
-            let v: Vec<_> = s.body.iter().collect();
-            for k in 1..v.len() { assert_eq!((v[k].0 - v[k - 1].0).abs() + (v[k].1 - v[k - 1].1).abs(), 1); }
+            for _ in 0..20000 { s.update(1.0 / 30.0); }
+            s.step(&mut p, 1.0 / 30.0);
+            for l in &s.lanes {
+                // invariante: el cuerpo es contiguo, sin repeticiones y dentro del carril
+                let cells: std::collections::HashSet<_> = l.body.iter().collect();
+                assert_eq!(cells.len(), l.body.len());
+                let v: Vec<_> = l.body.iter().collect();
+                for k in 1..v.len() { assert_eq!((v[k].0 - v[k - 1].0).abs() + (v[k].1 - v[k - 1].1).abs(), 1); }
+            }
         }
-        assert!(s.games > 1);
+        assert!(s.lanes.iter().map(|l| l.games).sum::<u32>() > 1);
     }
 }
