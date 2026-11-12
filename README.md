@@ -1,22 +1,41 @@
 # matrix-wayland
 
-Efecto Matrix como **fondo de pantalla** en Wayland. Cliente nativo en Rust que usa
+Fondos animados para Wayland (lluvia Matrix o un Galaga que se juega solo), en negro y con el
+color que elijas. Cliente nativo en Rust que usa
 `wlr-layer-shell` (capa `background`) y pinta por CPU con `wl_shm`: sin GPU, sin
 terminal y sin XWayland.
+
+## Escenas
+
+El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas (`-c`):
+
+- **`matrix`** (por defecto): lluvia de caracteres.
+- **`galaga`**: un shoot'em up inspirado en Galaga que **se juega solo**. Sprites propios (pixel art),
+  formación de enemigos con entradas en curva y picados, y una IA que apunta, dispara y esquiva
+  (con tiempo de reacción, así que a veces pierde y la partida se reinicia sola). Tres tipos de
+  enemigo y la nave en el color elegido; con `-c rainbow`, un color distinto por tipo.
+  `--hud` muestra puntuación, nivel y vidas abajo del todo.
 
 ## Uso
 
 ```
-matrix-wayland start -c cyan --fps 15   # arranca en segundo plano (start es opcional)
+matrix-wayland start -c cyan                 # arranca en segundo plano (start es opcional)
+matrix-wayland start --scene galaga -c yellow --hud
+matrix-wayland restart -c purple             # cambia de color y mantiene la escena
 matrix-wayland status
-matrix-wayland restart -c rainbow
-matrix-wayland stop                     # parada limpia (SIGTERM), sin kill
-matrix-wayland start --foreground       # primer plano, para depurar
+matrix-wayland stop                          # parada limpia (SIGTERM), sin kill
+matrix-wayland start --foreground            # primer plano, para depurar
 ```
 
-Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`,
-`#rrggbb` o `rainbow`), `-s` caracteres (`mixed katakana binary digits hex`),
-`--fps N`, `--size PX`, `--font RUTA`, `--waybar`/`--no-waybar` y `--fuzzel`/`--no-fuzzel` (ver abajo).
+Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `#rrggbb` o
+`rainbow`), `--scene matrix|galaga`, `--fps N` (matrix 15, galaga 30), `-s` caracteres
+(`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
+`--scale N` (galaga: píxeles por píxel de sprite; por defecto según la pantalla), `--hud`,
+`--waybar` y `--fuzzel` (ver abajo).
+
+**Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
+escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apagan una bandera, y
+`--reset` olvida todo y vuelve a los valores por defecto.
 
 ## Color de waybar (`--waybar`, opcional)
 
@@ -62,14 +81,6 @@ include=~/.config/fuzzel/matrix-colors.ini
 
 Se pueden combinar: `matrix-wayland start -c yellow --waybar --fuzzel`.
 
-### Las integraciones se recuerdan
-
-`--waybar` y `--fuzzel` son persistentes: se guardan en `~/.local/state/matrix-wayland/integrations`
-y se reaplican en cada `start`/`restart`, así que basta con `matrix-wayland restart -c cyan` para
-que la waybar y fuzzel sigan al color. Se apagan con `--no-waybar` / `--no-fuzzel` (restauran
-tus colores en el momento). `restart` no restaura los colores entre el proceso viejo y el nuevo;
-`stop` sí. Con `-c rainbow` se restauran los colores por defecto.
-
 ## Compilar e instalar
 
 ```
@@ -83,16 +94,17 @@ katakana de media anchura. Por defecto `/usr/share/fonts/noto-cjk/NotoSansCJK-Re
 
 ## Consumo medido
 
-Misma lógica en cuatro implementaciones, pantalla 1366x768 (sway). CPU en régimen estable:
+Escena matrix en distintas implementaciones (y galaga al final), pantalla 1366x768 (sway). CPU en régimen estable:
 
 | Implementación | CPU |
 |---|---|
 | Python en `kitten panel` (25 FPS) | ~13 % solo el script, más kitty pintando |
 | Rust en terminal con `kitten panel` (15 FPS) | ~17 % (kitty ~16 % + script ~1 %) |
-| **matrix-wayland (wl_shm, 15 FPS)** | **~4,3 %**, ~13 MB de RAM |
+| **matrix-wayland, escena matrix (wl_shm, 15 FPS)** | **~4,3 %**, ~13 MB de RAM |
+| **matrix-wayland, escena galaga (wl_shm, 30 FPS)** | **~6,6 %**, ~11 MB de RAM |
 
 Las cifras de Python/Go/Rust en terminal se midieron con un pty de 200x50, y la de
-matrix-wayland con `/proc/<pid>/stat` a 15 FPS; no son comparables al 100 %.
+matrix-wayland con `/proc/<pid>/stat`; no son comparables al 100 %.
 
 ## Licencia
 

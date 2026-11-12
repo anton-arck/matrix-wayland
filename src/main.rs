@@ -1,4 +1,6 @@
 //! Efecto Matrix como fondo de pantalla Wayland (wlr-layer-shell + wl_shm).
+mod galaga;
+
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -49,6 +51,7 @@ struct Rng(u64);
 impl Rng {
     fn next(&mut self) -> u64 { self.0 ^= self.0 << 13; self.0 ^= self.0 >> 7; self.0 ^= self.0 << 17; self.0 }
     fn f(&mut self) -> f64 { (self.next() >> 11) as f64 / (1u64 << 53) as f64 }
+    fn rf(&mut self, lo: f32, hi: f32) -> f32 { lo + (hi - lo) * self.f() as f32 }
     fn range(&mut self, lo: i32, hi: i32) -> i32 { lo + (self.next() % (hi - lo + 1).max(1) as u64) as i32 }
 }
 
@@ -114,6 +117,23 @@ impl Painter {
         Painter { fb: vec![], w: 0, h: 0, cell_w, cell_h, pad_x: 0, pad_y: 0, glyphs }
     }
 
+    /// Sin fuente ni glifos (escenas de pixeles, p. ej. galaga): evita cargar la fuente CJK.
+    fn plain() -> Self {
+        Painter { fb: vec![], w: 0, h: 0, cell_w: 8, cell_h: 16, pad_x: 0, pad_y: 0, glyphs: HashMap::new() }
+    }
+
+    fn clear(&mut self) { self.fb.fill(BG); }
+
+    fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: u32) {
+        let (x0, y0) = (x.max(0), y.max(0));
+        let (x1, y1) = ((x + w).min(self.w as i32), (y + h).min(self.h as i32));
+        if x0 >= x1 || y0 >= y1 { return; }
+        for yy in y0..y1 {
+            let row = yy as usize * self.w;
+            self.fb[row + x0 as usize..row + x1 as usize].fill(c);
+        }
+    }
+
     fn resize(&mut self, w: usize, h: usize) -> (usize, usize) {
         self.w = w;
         self.h = h;
@@ -153,6 +173,12 @@ impl Painter {
 }
 
 // ---------- logica del efecto ----------
+/// Una escena anima el framebuffer del `Painter` (matrix, galaga...).
+trait Scene {
+    fn resize(&mut self, p: &mut Painter, w: usize, h: usize);
+    fn step(&mut self, p: &mut Painter, dt: f32);
+}
+
 struct Matrix {
     cols: usize,
     rows: usize,
@@ -181,7 +207,7 @@ impl Matrix {
     }
     fn rand_char(&mut self) -> char { self.chars[(self.rng.next() % self.chars.len() as u64) as usize] }
 
-    fn step(&mut self, p: &mut Painter) {
+    fn advance(&mut self, p: &mut Painter) {
         let ri = self.rows as i32;
         for x in 0..self.cols {
             if self.rng.f() > self.speed[x] { continue; }
@@ -224,6 +250,14 @@ impl Matrix {
     }
 }
 
+impl Scene for Matrix {
+    fn resize(&mut self, p: &mut Painter, w: usize, h: usize) {
+        let (cols, rows) = p.resize(w, h);
+        self.reset(cols, rows);
+    }
+    fn step(&mut self, p: &mut Painter, _dt: f32) { self.advance(p); }
+}
+
 // ---------- cliente Wayland ----------
 struct App {
     registry_state: RegistryState,
@@ -237,12 +271,13 @@ struct App {
     frame_pending: bool,
     exit: bool,
     painter: Painter,
-    matrix: Matrix,
+    scene: Box<dyn Scene>,
+    dt: f32,
 }
 
 impl App {
     fn draw(&mut self, qh: &QueueHandle<Self>) {
-        self.matrix.step(&mut self.painter);
+        self.scene.step(&mut self.painter, self.dt);
         let (w, h) = (self.width as i32, self.height as i32);
         let (buffer, canvas) = self.pool.create_buffer(w, h, w * 4, wl_shm::Format::Argb8888).expect("create buffer");
         // SAFETY: u32 -> bytes; el framebuffer tiene exactamente w*h*4 bytes.
@@ -282,8 +317,7 @@ impl LayerShellHandler for App {
         if !self.configured || (w, h) != (self.width, self.height) {
             self.width = w;
             self.height = h;
-            let (cols, rows) = self.painter.resize(w as usize, h as usize);
-            self.matrix.reset(cols, rows);
+            self.scene.resize(&mut self.painter, w as usize, h as usize);
             self.configured = true;
             self.draw(qh);
         }
@@ -372,57 +406,66 @@ fn cmd_stop(keep_theme: bool) -> bool {
     }
 }
 
-// ---------- integraciones persistentes ----------
-// --waybar / --fuzzel se recuerdan entre arranques (start/restart); se apagan con
-// --no-waybar / --no-fuzzel. Se guardan en $XDG_STATE_HOME/matrix-wayland/integrations.
+// ---------- opciones persistentes ----------
+// start/restart recuerdan las ultimas opciones (escena, color, fps, --waybar...). Lo que
+// escribas gana sobre lo recordado; --no-X apaga una bandera y --reset olvida todo.
+// Se guardan en $XDG_STATE_HOME/matrix-wayland/options.
+const VALUE_OPTS: [&str; 7] = ["-c", "-s", "--fps", "--size", "--font", "--scene", "--scale"];
+const FLAG_OPTS: [&str; 3] = ["--waybar", "--fuzzel", "--hud"];
+
 fn state_file() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))?;
-    Some(base.join("matrix-wayland").join("integrations"))
+    Some(base.join("matrix-wayland").join("options"))
 }
 
-fn load_integrations() -> (bool, bool) {
-    let t = state_file().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-    (t.lines().any(|l| l.trim() == "waybar"), t.lines().any(|l| l.trim() == "fuzzel"))
+fn load_options() -> std::collections::BTreeMap<String, String> {
+    let mut t = state_file().and_then(|p| std::fs::read_to_string(p).ok());
+    if t.is_none() { // migracion: version anterior, fichero `integrations` con "waybar"/"fuzzel"
+        t = state_file().and_then(|p| std::fs::read_to_string(p.with_file_name("integrations")).ok())
+            .map(|old| old.lines().map(|l| format!("--{}\t\n", l.trim())).collect());
+    }
+    let t = t.unwrap_or_default();
+    t.lines().filter(|l| !l.trim().is_empty()).map(|l| {
+        let (k, v) = l.split_once('\t').unwrap_or((l, ""));
+        (k.to_string(), v.to_string())
+    }).filter(|(k, _)| VALUE_OPTS.contains(&k.as_str()) || FLAG_OPTS.contains(&k.as_str())).collect()
 }
 
-fn save_integrations(waybar: bool, fuzzel: bool) {
+fn save_options(o: &std::collections::BTreeMap<String, String>) {
     let Some(p) = state_file() else { return };
     if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
-    let mut body = String::new();
-    if waybar { body.push_str("waybar\n"); }
-    if fuzzel { body.push_str("fuzzel\n"); }
+    let body: String = o.iter().map(|(k, v)| format!("{k}\t{v}\n")).collect();
     let _ = atomic_write(&p, &body);
 }
 
-/// Separa las banderas de integracion de `opts`, las combina con lo recordado y devuelve
-/// las opciones que se pasan al proceso (siempre con --waybar/--fuzzel explicitos).
-fn resolve_integrations(opts: &[String]) -> Vec<String> {
-    let (old_waybar, old_fuzzel) = load_integrations();
-    let (mut waybar, mut fuzzel) = (old_waybar, old_fuzzel);
+/// Combina las opciones dadas con las recordadas y devuelve la lista completa y explicita
+/// que recibe el proceso.
+fn resolve_options(opts: &[String]) -> Vec<String> {
+    let mut o = load_options();
+    let (old_waybar, old_fuzzel) = (o.contains_key("--waybar"), o.contains_key("--fuzzel"));
     let mut rest = Vec::new();
     let mut it = opts.iter();
-    while let Some(o) = it.next() {
-        match o.as_str() {
-            "--waybar" => waybar = true,
-            "--no-waybar" => waybar = false,
-            "--fuzzel" => fuzzel = true,
-            "--no-fuzzel" => fuzzel = false,
-            _ => rest.push(o.clone()),
+    while let Some(a) = it.next() {
+        if a == "--reset" { o.clear(); }
+        else if VALUE_OPTS.contains(&a.as_str()) {
+            match it.next() { Some(v) => { o.insert(a.clone(), v.clone()); } None => rest.push(a.clone()) }
         }
+        else if FLAG_OPTS.contains(&a.as_str()) { o.insert(a.clone(), String::new()); }
+        else if let Some(f) = a.strip_prefix("--no-").map(|f| format!("--{f}")).filter(|f| FLAG_OPTS.contains(&f.as_str())) { o.remove(&f); }
+        else { rest.push(a.clone()); } // desconocida: que la rechace el proceso con el uso
     }
-    save_integrations(waybar, fuzzel);
+    save_options(&o);
     // si se apaga una integracion, el proceso anterior (restart) pudo dejar su color: restaurar
-    if old_waybar && !waybar { waybar_apply(None); }
-    if old_fuzzel && !fuzzel { fuzzel_apply(None); }
-    if waybar { rest.push("--waybar".into()); }
-    if fuzzel { rest.push("--fuzzel".into()); }
+    if old_waybar && !o.contains_key("--waybar") { waybar_apply(None); }
+    if old_fuzzel && !o.contains_key("--fuzzel") { fuzzel_apply(None); }
+    for (k, v) in &o { rest.push(k.clone()); if !v.is_empty() { rest.push(v.clone()); } }
     rest
 }
 
 fn cmd_start(opts: &[String]) {
-    let opts = &resolve_integrations(opts);
     if let Some(pid) = running_pid() { eprintln!("ya esta en marcha (pid {pid}); usa `matrix-wayland restart`"); std::process::exit(1); }
+    let opts = &resolve_options(opts);
     let exe = std::env::current_exe().expect("exe");
     let mut c = Command::new(exe);
     c.arg("--foreground").args(opts).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -529,13 +572,24 @@ fn waybar_apply(accent: Option<[u8; 3]>) {
 }
 
 fn usage() -> ! {
-    eprintln!("uso: matrix-wayland [start|stop|restart|status] [-c color|#rrggbb|rainbow] [-s binary|digits|hex|katakana|mixed] [--fps N] [--size PX] [--font RUTA] [--waybar|--no-waybar] [--fuzzel|--no-fuzzel]
-  sin subcomando = start. --foreground lo deja en primer plano.");
+    eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
+  -c COLOR          green cyan magenta pink blue purple orange yellow red | #rrggbb | rainbow
+  --scene NOMBRE    matrix (por defecto) | galaga
+  -s CARACTERES     (matrix) mixed katakana binary digits hex
+  --fps N           fotogramas por segundo (matrix 15, galaga 30)
+  --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
+  --scale N         (galaga) pixeles por pixel de sprite (por defecto, segun la pantalla)
+  --hud             (galaga) puntuacion, nivel y vidas
+  --waybar / --fuzzel      el color tambien en waybar / fuzzel
+  --no-waybar --no-fuzzel --no-hud   apagan una bandera
+  --reset           olvida las opciones recordadas
+Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: primer plano.");
     std::process::exit(2)
 }
 
 fn main() {
-    let (mut color, mut set, mut fps, mut size) = ("green".to_string(), "mixed".to_string(), 15.0f64, 16.0f32);
+    let (mut color, mut set, mut fps, mut size) = ("green".to_string(), "mixed".to_string(), 0.0f64, 16.0f32);
+    let (mut scene_name, mut scale, mut hud) = ("matrix".to_string(), 0i32, false);
     let mut font_path = "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc".to_string();
     let mut a: Vec<String> = std::env::args().skip(1).collect();
     let mut foreground = false;
@@ -557,6 +611,7 @@ fn main() {
     while i < a.len() {
         if a[i] == "--waybar" { waybar = true; i += 1; continue; }
         if a[i] == "--fuzzel" { fuzzel = true; i += 1; continue; }
+        if a[i] == "--hud" { hud = true; i += 1; continue; }
         let val = a.get(i + 1).cloned();
         match a[i].as_str() {
             "-c" => color = val.unwrap_or_else(|| usage()),
@@ -564,10 +619,14 @@ fn main() {
             "--fps" => fps = val.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()),
             "--size" => size = val.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()),
             "--font" => font_path = val.unwrap_or_else(|| usage()),
+            "--scene" => scene_name = val.unwrap_or_else(|| usage()),
+            "--scale" => scale = val.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()),
             _ => usage(),
         }
         i += 2;
     }
+    if !["matrix", "galaga"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga)"); std::process::exit(2) }
+    if fps <= 0.0 { fps = if scene_name == "galaga" { 30.0 } else { 15.0 }; }
     let pals: Vec<Pal> = if color.to_lowercase() == "rainbow" {
         NEON.iter().map(|(_, c)| make_pal(*c)).collect()
     } else {
@@ -585,14 +644,17 @@ fn main() {
         else { fuzzel_apply(parse_color(&color)); }
     }
     let chars = charset(&set);
-    let data = std::fs::read(&font_path).unwrap_or_else(|e| { eprintln!("no se pudo leer la fuente {font_path}: {e}"); std::process::exit(1) });
-    let font = fontdue::Font::from_bytes(data, fontdue::FontSettings { scale: size, ..Default::default() })
-        .unwrap_or_else(|e| { eprintln!("fuente invalida: {e}"); std::process::exit(1) });
-    let painter = Painter::new(&font, &chars, size);
-    drop(font);
-    unsafe { malloc_trim(0); }
-    // ya estan rasterizados los glifos; libera ~270 MB de la fuente CJK
-
+    let (painter, scene): (Painter, Box<dyn Scene>) = if scene_name == "galaga" {
+        (Painter::plain(), Box::new(galaga::Galaga::new(pals, scale, hud)))
+    } else {
+        let data = std::fs::read(&font_path).unwrap_or_else(|e| { eprintln!("no se pudo leer la fuente {font_path}: {e}"); std::process::exit(1) });
+        let font = fontdue::Font::from_bytes(data, fontdue::FontSettings { scale: size, ..Default::default() })
+            .unwrap_or_else(|e| { eprintln!("fuente invalida: {e}"); std::process::exit(1) });
+        let painter = Painter::new(&font, &chars, size);
+        drop(font); // ya estan rasterizados los glifos; libera ~270 MB de la fuente CJK
+        unsafe { malloc_trim(0); }
+        (painter, Box::new(Matrix::new(pals, chars)))
+    };
     unsafe { signal(2, on_signal as *const () as usize); signal(15, on_signal as *const () as usize); signal(1, on_hup as *const () as usize); }
 
     let conn = Connection::connect_to_env().expect("no hay compositor Wayland");
@@ -622,7 +684,8 @@ fn main() {
         frame_pending: false,
         exit: false,
         painter,
-        matrix: Matrix::new(pals, chars),
+        scene,
+        dt: (1.0 / fps.max(1.0)) as f32,
     };
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new().unwrap();
