@@ -1,6 +1,6 @@
 # matrix-wayland
 
-Fondos animados para Wayland (lluvia Matrix o un Galaga que se juega solo), en negro y con el
+Fondos animados para Wayland (lluvia Matrix, un Galaga o un Pac-Man que se juegan solos), en negro y con el
 color que elijas. Cliente nativo en Rust que usa
 `wlr-layer-shell` (capa `background`) y pinta por CPU con `wl_shm`: sin GPU, sin
 terminal y sin XWayland.
@@ -15,6 +15,13 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   (con tiempo de reacción, así que a veces pierde y la partida se reinicia sola). Tres tipos de
   enemigo y la nave en el color elegido; con `-c rainbow`, un color distinto por tipo.
   `--hud` muestra puntuación, nivel y vidas abajo del todo.
+- **`pacman`**: un Pac-Man inspirado que **se juega solo** en un laberinto **generado
+  proceduralmente** (simétrico, conexo y sin callejones sin salida), adaptado al tamaño de la
+  pantalla y distinto en cada nivel. Cuatro fantasmas con personalidades (persecución, emboscada
+  y dos que se retiran a su esquina), pastillas de poder y una IA que busca puntos, huye de los
+  fantasmas, va a por las pastillas de poder cuando se ve acorralada y persigue fantasmas
+  asustados. Con `-c rainbow` usa los colores clásicos (laberinto azul, Pac-Man amarillo).
+  `--hud` muestra puntuación, nivel y vidas; `--scale N` fija el tamaño de casilla en píxeles.
 
 ## Uso
 
@@ -28,9 +35,9 @@ matrix-wayland start --foreground            # primer plano, para depurar
 ```
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `#rrggbb` o
-`rainbow`), `--scene matrix|galaga`, `--fps N` (matrix 15, galaga 30), `-s` caracteres
+`rainbow`), `--scene matrix|galaga|pacman`, `--fps N` (matrix 15, galaga y pacman 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
-`--scale N` (galaga: píxeles por píxel de sprite; por defecto según la pantalla), `--hud`,
+`--scale N` (galaga: píxeles por píxel de sprite; pacman: píxeles por casilla; por defecto según la pantalla), `--hud`,
 `--waybar` y `--fuzzel` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
@@ -102,6 +109,7 @@ Escena matrix en distintas implementaciones (y galaga al final), pantalla 1366x7
 | Rust en terminal con `kitten panel` (15 FPS) | ~17 % (kitty ~16 % + script ~1 %) |
 | **matrix-wayland, escena matrix (wl_shm, 15 FPS)** | **~4,3 %**, ~13 MB de RAM |
 | **matrix-wayland, escena galaga (wl_shm, 30 FPS)** | **~6,6 %**, ~11 MB de RAM |
+| **matrix-wayland, escena pacman (wl_shm, 30 FPS)** | **~7,9 %**, ~16 MB de RAM |
 
 Las cifras de Python/Go/Rust en terminal se midieron con un pty de 200x50, y la de
 matrix-wayland con `/proc/<pid>/stat`; no son comparables al 100 %.
