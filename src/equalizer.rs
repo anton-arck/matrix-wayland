@@ -7,17 +7,17 @@ use super::{Painter, Pal, Rng, Scene};
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
-const RATE: usize = 44100;
-const FFT_N: usize = 2048;
+pub(crate) const RATE: usize = 44100;
+pub(crate) const FFT_N: usize = 2048;
 
 extern "C" { fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32; }
 
 /// Ultimas muestras capturadas (mono, -1..1), compartidas con el hilo lector.
-type Shared = Arc<Mutex<Vec<f32>>>;
+pub(crate) type Shared = Arc<Mutex<Vec<f32>>>;
 
 /// Hilo que lanza `parec` sobre el monitor de la salida por defecto y vuelca las muestras.
 /// Si parec termina (p. ej. PipeWire se reinicia) lo relanza a los 2 s.
-fn spawn_capture() -> Option<Shared> {
+pub(crate) fn spawn_capture() -> Option<Shared> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     let mut probe = Command::new("parec");
@@ -122,8 +122,13 @@ impl Spectrum {
         }
         // referencia: sube al instante con el pico y baja lento; con suelo para no amplificar el ruido
         self.top = if frame_max > self.top { frame_max } else { (self.top - 4.0 * dt).max(frame_max) };
-        let top = self.top.max(-42.0);
-        for i in 0..n { out[i] = ((db[i] - (top - 48.0)) / 48.0).clamp(0.0, 1.0); }
+        // margen de 3 dB sobre el pico y rodilla suave por encima del 70 %: la barra mas fuerte se queda
+        // en ~0.9 en vez de pegarse al techo (antes, con la referencia = pico, tocaba el 100 % en cada golpe)
+        let top = self.top.max(-42.0) + 3.0;
+        for i in 0..n {
+            let x = (db[i] - (top - 50.0)) / 50.0;
+            out[i] = if x < 0.7 { x } else { 0.7 + 0.3 * ((x - 0.7) / 0.3).tanh() }.clamp(0.0, 1.0);
+        }
     }
 }
 
@@ -139,6 +144,7 @@ pub struct Equalizer {
     off: u32,      // LED apagado
     peak_col: u32,
     // geometria
+    wpx: i32, hpx: i32,
     led: i32, ledh: i32, gap: i32, cols: usize, rows: i32, ox: i32, oy: i32,
     // estado de las barras
     lvl: Vec<f32>, peak: Vec<f32>, hold: Vec<f32>, vel: Vec<f32>, noise: Vec<f32>,
@@ -146,7 +152,7 @@ pub struct Equalizer {
     t: f32, beat: f32, kick: f32, snare: f32, hat: f32, bpm: f32, bass: f32,
 }
 
-fn scale(c: u32, k: f32) -> u32 {
+pub(crate) fn scale(c: u32, k: f32) -> u32 {
     let ch = |s: u32| (((c >> s) & 0xFF) as f32 * k).min(255.0) as u32;
     0xFF00_0000 | ch(16) << 16 | ch(8) << 8 | ch(0)
 }
@@ -166,7 +172,7 @@ impl Equalizer {
         Equalizer {
             rng: Rng(seed | 1), t_arg: tile, bar_w, audio, mirror, spec: Spectrum::new(), tgt: vec![], on, off: scale(pals[0].bands[0], 0.07),
             peak_col: pals[0].head,
-            led: 24, ledh: 8, gap: 2, cols: 0, rows: 0, ox: 0, oy: 0,
+            wpx: 0, hpx: 0, led: 24, ledh: 8, gap: 2, cols: 0, rows: 0, ox: 0, oy: 0,
             lvl: vec![], peak: vec![], hold: vec![], vel: vec![], noise: vec![],
             t: 0.0, beat: 0.0, kick: 0.0, snare: 0.0, hat: 0.0, bpm: 124.0, bass: 0.0,
         }
@@ -245,10 +251,21 @@ impl Equalizer {
         }
     }
 
+    /// Reparte `total` px en `n` tramos separados por `gap`; devuelve (inicio, largo) del tramo i.
+    /// Asi los LED rellenan el espacio exacto sin sobrar ni faltar un pixel.
+    fn span(i: i32, n: i32, total: i32, gap: i32) -> (i32, i32) {
+        let a = i * (total + gap) / n;
+        let b = (i + 1) * (total + gap) / n - gap;
+        (a, b - a)
+    }
+
     fn paint(&self, p: &mut Painter) {
         let (px, py) = (self.led + self.gap, self.ledh + self.gap);
+        // spectrum (espejo): los LED se estiran para cubrir toda la pantalla, sin margen
+        let reach = (self.hpx / 2 - self.gap / 2).max(1);
         for i in 0..self.cols {
-            let x = self.ox + i as i32 * px;
+            let (x, wid) = if self.mirror { Self::span(i as i32, self.cols as i32, self.wpx, self.gap) }
+                else { (self.ox + i as i32 * px, self.led) };
             let lit = (self.lvl[i] * self.rows as f32).round() as i32;
             let pk = ((self.peak[i] * self.rows as f32).round() as i32 - 1).clamp(0, self.rows - 1);
             for r in 0..self.rows {
@@ -256,10 +273,11 @@ impl Equalizer {
                     else if r < lit { self.color(r) } else { self.off };
                 if self.mirror {
                     // la fila 0 de cada mitad queda pegada a la linea central
-                    p.rect(x, self.oy - (r + 1) * py + self.gap, self.led, self.ledh, c);
-                    p.rect(x, self.oy + r * py + self.gap, self.led, self.ledh, c);
+                    let (s, l) = Self::span(r, self.rows, reach, self.gap);
+                    p.rect(x, self.hpx / 2 - self.gap / 2 - s - l, wid, l, c);
+                    p.rect(x, self.hpx / 2 + self.gap / 2 + s, wid, l, c);
                 } else {
-                    p.rect(x, self.oy - (r + 1) * py + self.gap, self.led, self.ledh, c);
+                    p.rect(x, self.oy - (r + 1) * py + self.gap, wid, self.ledh, c);
                 }
             }
         }
@@ -270,16 +288,18 @@ impl Scene for Equalizer {
     fn resize(&mut self, p: &mut Painter, w: usize, h: usize) {
         p.resize(w, h);
         p.clear();
+        self.wpx = w as i32;
+        self.hpx = h as i32;
         // LED rectangulares: el doble de anchos que el lado base y bastante mas bajos
         let side = if self.t_arg > 0 { self.t_arg } else { (h as i32 / 38).clamp(8, 40) };
         self.led = if self.bar_w > 0 { self.bar_w } else { side * 2 };
         self.ledh = (side * 3 / 5).max(3);
         self.gap = (side / 5).max(2);
         let (px, py) = (self.led + self.gap, self.ledh + self.gap);
-        let margin = (w as i32 / 24).max(px);
-        self.cols = (((w as i32 - 2 * margin) / px).max(4)) as usize;
-        let span = if self.mirror { h as i32 * 88 / 100 / 2 } else { h as i32 * 88 / 100 };
-        self.rows = ((span / py).max(4)).min(80);
+        let margin = if self.mirror { 0 } else { (w as i32 / 24).max(px) };
+        self.cols = (((w as i32 - 2 * margin + self.gap) / px).max(4)) as usize;
+        let span = if self.mirror { (h as i32 / 2 - self.gap / 2).max(1) } else { h as i32 * 88 / 100 };
+        self.rows = (((span + self.gap) / py).max(4)).min(80);
         self.ox = (w as i32 - self.cols as i32 * px + self.gap) / 2;
         self.oy = if self.mirror { h as i32 / 2 - self.gap / 2 } // linea central
             else { h as i32 - (h as i32 - self.rows * py) / 2 + self.gap }; // bloque centrado
@@ -333,6 +353,20 @@ mod audio_tests {
             let (lo, hi) = Spectrum::edges(best, n);
             assert!(f >= lo * 0.85 && f <= hi * 1.15, "{f} Hz cae en la barra {best} ({lo}-{hi})");
         }
+    }
+
+    #[test]
+    fn loud_input_keeps_headroom() {
+        let mut sp = Spectrum::new();
+        // musica muy fuerte y densa: varios tonos a fondo de escala; nada debe pegarse al techo
+        let x: Vec<f32> = (0..FFT_N).map(|i| {
+            let t = i as f32 / RATE as f32;
+            [60.0f32, 250.0, 1000.0, 4000.0].iter().map(|f| 0.24 * (std::f32::consts::TAU * f * t).sin()).sum()
+        }).collect();
+        let mut out = vec![0.0; 48];
+        for _ in 0..30 { sp.bars(&x, 0.03, &mut out); }
+        let m = out.iter().cloned().fold(0.0, f32::max);
+        assert!(m > 0.8 && m < 0.95, "pico {m}");
     }
 
     #[test]

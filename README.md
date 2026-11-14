@@ -56,8 +56,14 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   finas conservando el alto del LED).
 
 - **`spectrum`**: el mismo analizador, pero **en espejo**: las barras salen de una línea central y crecen
-  hacia arriba y hacia abajo a la vez, como el visor de espectro de Sonic Pi. Mismas opciones que
-  `equalizer` (audio real, `--simulate`, `--scale`, `rainbow`).
+  hacia arriba y hacia abajo a la vez, como el visor de espectro de Sonic Pi. A diferencia de
+  `equalizer`, **cubre toda la pantalla sin márgenes** (los LED se estiran para llenarla justo). Mismas
+  opciones que `equalizer` (audio real, `--simulate`, `--scale`, `--bar-width`, `rainbow`).
+
+- **`scope`**: osciloscopio mono como el Scope de Sonic Pi: dibuja la forma de onda de lo que suena
+  (misma captura con `parec`), con disparo en cruce por cero para que la onda quede quieta y ganancia
+  automática. Con `rainbow`, un degradado recorre los neones de izquierda a derecha. `--scale N` fija
+  el grosor de la línea; `--simulate` dibuja una onda sintética.
 
 ## Uso
 
@@ -71,10 +77,10 @@ matrix-wayland start --foreground            # primer plano, para depurar
 ```
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `#rrggbb` o
-`rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
+`rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
-`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; por defecto según la pantalla), `--hud`,
-`--bar-width PX` y `--simulate` (equalizer y spectrum), `--waybar` y `--fuzzel` (ver abajo).
+`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; scope: grosor de la línea; por defecto según la pantalla), `--hud`,
+`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar` y `--fuzzel` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apagan una bandera, y

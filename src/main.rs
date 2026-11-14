@@ -2,6 +2,7 @@
 mod equalizer;
 mod galaga;
 mod pacman;
+mod scope;
 mod snake;
 mod tron;
 
@@ -647,13 +648,13 @@ fn waybar_apply(accent: Option<Accent>) {
 fn usage() -> ! {
     eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
   -c COLOR          green cyan magenta pink blue purple orange yellow red | #rrggbb | rainbow
-  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron | equalizer | spectrum
+  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron | equalizer | spectrum | scope
   -s CARACTERES     (matrix) mixed katakana binary digits hex
   --fps N           fotogramas por segundo (matrix 15, el resto 30)
   --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
-  --scale N         (galaga) pixeles por pixel de sprite; (pacman, snake, tron) pixeles por casilla; (equalizer, spectrum) tamano del LED (ancho doble que alto) (por defecto, segun la pantalla)
-  --bar-width PX    (equalizer, spectrum) ancho de cada barra en pixeles (por defecto, el doble del alto del LED)
-  --simulate        (equalizer, spectrum) musica simulada en vez de captar el audio real
+  --scale N         (galaga) pixeles por pixel de sprite; (pacman, snake, tron) pixeles por casilla; (equalizer, spectrum) tamano del LED; (scope) grosor de la linea (ancho doble que alto) (por defecto, segun la pantalla)
+  --bar-width PX    (equalizer, spectrum) ancho de cada barra en pixeles (0 o sin indicar: el doble del alto del LED)
+  --simulate        (equalizer, spectrum, scope) audio simulado en vez de captar el audio real
   --hud             (galaga, pacman, snake, tron) puntuacion, nivel/ronda y vidas
   --waybar / --fuzzel      el color tambien en waybar / fuzzel
   --no-waybar --no-fuzzel --no-hud --no-simulate   apagan una bandera
@@ -700,13 +701,13 @@ fn main() {
             "--size" => size = val.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()),
             "--font" => font_path = val.unwrap_or_else(|| usage()),
             "--scene" => scene_name = val.unwrap_or_else(|| usage()),
-            "--bar-width" => bar_width = val.and_then(|v| v.parse().ok()).filter(|&v: &i32| v > 0).unwrap_or_else(|| usage()),
+            "--bar-width" => bar_width = val.and_then(|v| v.parse().ok()).filter(|&v: &i32| v >= 0).unwrap_or_else(|| usage()),
             "--scale" => scale = val.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()),
             _ => usage(),
         }
         i += 2;
     }
-    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer", "spectrum"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer|spectrum)"); std::process::exit(2) }
+    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer", "spectrum", "scope"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope)"); std::process::exit(2) }
     if fps <= 0.0 { fps = if scene_name == "matrix" { 15.0 } else { 30.0 }; }
     let pals: Vec<Pal> = if color.to_lowercase() == "rainbow" {
         NEON.iter().map(|(_, c)| make_pal(*c)).collect()
@@ -729,6 +730,8 @@ fn main() {
         (Painter::plain(), Box::new(pacman::Pacman::new(pals, scale, hud)))
     } else if scene_name == "snake" {
         (Painter::plain(), Box::new(snake::Snake::new(pals, scale, hud)))
+    } else if scene_name == "scope" {
+        (Painter::plain(), Box::new(scope::Scope::new(pals, scale, simulate)))
     } else if scene_name == "equalizer" || scene_name == "spectrum" {
         (Painter::plain(), Box::new(equalizer::Equalizer::new(pals, scale, simulate, scene_name == "spectrum", bar_width)))
     } else if scene_name == "tron" {
