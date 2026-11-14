@@ -1,4 +1,5 @@
 //! Efecto Matrix como fondo de pantalla Wayland (wlr-layer-shell + wl_shm).
+mod equalizer;
 mod galaga;
 mod pacman;
 mod snake;
@@ -48,6 +49,16 @@ const NEON: [(&str, [u8; 3]); 9] = [
 ];
 const BANDS: [f64; 4] = [1.0, 0.65, 0.38, 0.18];
 const BG: u32 = 0xFF00_0000;
+/// Orden de los neones en waybar/fuzzel con rainbow: vecinos siempre de tono muy distinto.
+/// Indices en NEON: cyan, magenta, yellow, green, orange, blue, pink, purple, red.
+const RAINBOW_ORDER: [usize; 9] = [1, 2, 7, 0, 6, 4, 3, 5, 8];
+
+/// Color del tema de waybar/fuzzel: uno solo o rainbow (colores alternados).
+#[derive(Clone, Copy)]
+enum Accent { One([u8; 3]), Rainbow }
+fn accent_of(color: &str) -> Option<Accent> {
+    if color.to_lowercase() == "rainbow" { Some(Accent::Rainbow) } else { parse_color(color).map(Accent::One) }
+}
 
 // ---------- utilidades ----------
 struct Rng(u64);
@@ -490,9 +501,9 @@ fn cmd_theme(opts: &[String]) {
         }
     }
     if !wb && !fz { eprintln!("nada que aplicar: usa --waybar y/o --fuzzel (se recuerdan para la proxima vez)"); std::process::exit(1); }
-    let rgb = if color.to_lowercase() == "rainbow" { None } else { parse_color(&color) };
+    let rgb = accent_of(&color);
     if rgb.is_none() {
-        eprintln!("el color {color:?} no sirve para el tema (use un nombre neon o #rrggbb; rainbow no tiene un color unico)");
+        eprintln!("el color {color:?} no sirve para el tema (use un nombre neon, #rrggbb o rainbow)");
         std::process::exit(2);
     }
     if wb { waybar_apply(rgb); }
@@ -550,10 +561,10 @@ fn hex(c: [u8; 3]) -> String { format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2]) }
 
 /// Escribe el CSS de GTK con los colores (None = solo un comentario, para que el
 /// style.css use sus colores por defecto).
-fn write_waybar_css(accent: Option<[u8; 3]>) -> Result<(), String> {
+fn write_waybar_css(accent: Option<Accent>) -> Result<(), String> {
     let path = waybar_css_path().ok_or("no se pudo resolver ~/.config/waybar")?;
     let body = match accent {
-        Some(c) => format!(
+        Some(Accent::One(c)) => format!(
             "/* generado por matrix-wayland */\n\
              @define-color matrix_accent #{h};\n\
              @define-color matrix_fg #{h};\n\
@@ -561,16 +572,32 @@ fn write_waybar_css(accent: Option<[u8; 3]>) -> Result<(), String> {
              @define-color matrix_mod_bg #000000;\n\
              @define-color matrix_mod_hover rgba({r},{g},{b},0.25);\n",
             h = hex(c), r = c[0], g = c[1], b = c[2]),
+        Some(Accent::Rainbow) => {
+            // cada modulo (y cada boton de workspace) con un neon distinto, alternados
+            let mut css = String::from("/* generado por matrix-wayland: rainbow */\n\
+                @define-color matrix_accent #ffffff;\n@define-color matrix_fg #ffffff;\n\
+                @define-color matrix_bar_bg #000000;\n@define-color matrix_mod_bg #000000;\n\
+                @define-color matrix_mod_hover rgba(255,255,255,0.18);\n");
+            let mut k = 0;
+            let mut next = || { let c = hex(NEON[RAINBOW_ORDER[k % RAINBOW_ORDER.len()]].1); k += 1; c };
+            for sel in ["#custom-launcher"] { css += &format!("{sel} {{ color: #{}; }}\n", next()); }
+            for n in 1..=10 { css += &format!("#workspaces button:nth-child({n}) {{ color: #{}; }}\n", next()); }
+            for sel in ["#window", "#network", "#privacy", "#custom-updates", "#custom-keyboard-layout", "#cpu", "#temperature",
+                        "#memory", "#wireplumber", "#battery", "#custom-settings", "#clock", "#custom-power"] {
+                css += &format!("{sel} {{ color: #{}; }}\n", next());
+            }
+            css
+        }
         None => "/* generado por matrix-wayland: inactivo, se usa el color por defecto del style.css */\n".to_string(),
     };
     atomic_write(&path, &body)
 }
 
 /// Tema de fuzzel (se lee al abrirlo: no hace falta recargar nada).
-fn write_fuzzel_ini(accent: Option<[u8; 3]>) -> Result<(), String> {
+fn write_fuzzel_ini(accent: Option<Accent>) -> Result<(), String> {
     let path = config_dir().ok_or("no se pudo resolver ~/.config")?.join("fuzzel").join("matrix-colors.ini");
     let body = match accent {
-        Some(c) => {
+        Some(Accent::One(c)) => {
             let mix = |f: f64| hex([(c[0] as f64 * f) as u8, (c[1] as f64 * f) as u8, (c[2] as f64 * f) as u8]);
             let lite = hex([(c[0] as f64 + (255.0 - c[0] as f64) * 0.75) as u8, (c[1] as f64 + (255.0 - c[1] as f64) * 0.75) as u8, (c[2] as f64 + (255.0 - c[2] as f64) * 0.75) as u8]);
             let a = hex(c);
@@ -580,12 +607,21 @@ fn write_fuzzel_ini(accent: Option<[u8; 3]>) -> Result<(), String> {
                  counter={p}ff\nborder={a}ff\n",
                 p = mix(0.55))
         }
+        Some(Accent::Rainbow) => {
+            // un neon distinto por elemento (fuzzel pinta todas las filas con el mismo color de texto)
+            let c = |i: usize| hex(NEON[RAINBOW_ORDER[i % RAINBOW_ORDER.len()]].1);
+            format!(
+                "# generado por matrix-wayland: rainbow\n[colors]\nbackground=000000ff\ntext={}ff\nprompt={}ff\ninput={}ff\n\
+                 placeholder={}ff\nmatch={}ff\nselection-match={}ff\nselection={}40\nselection-text={}ff\n\
+                 counter={}ff\nborder={}ff\n",
+                c(0), c(1), c(2), c(3), c(4), c(5), c(6), c(7), c(8), c(1))
+        }
         None => "# generado por matrix-wayland: inactivo, se usan los colores por defecto\n".to_string(),
     };
     atomic_write(&path, &body)
 }
 
-fn fuzzel_apply(accent: Option<[u8; 3]>) {
+fn fuzzel_apply(accent: Option<Accent>) {
     if let Err(e) = write_fuzzel_ini(accent) { eprintln!("fuzzel: {e}"); }
 }
 
@@ -601,7 +637,7 @@ fn reload_waybar() {
     }
 }
 
-fn waybar_apply(accent: Option<[u8; 3]>) {
+fn waybar_apply(accent: Option<Accent>) {
     match write_waybar_css(accent) {
         Ok(()) => reload_waybar(),
         Err(e) => eprintln!("waybar: {e}"),
@@ -611,11 +647,11 @@ fn waybar_apply(accent: Option<[u8; 3]>) {
 fn usage() -> ! {
     eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
   -c COLOR          green cyan magenta pink blue purple orange yellow red | #rrggbb | rainbow
-  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron
+  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron | equalizer
   -s CARACTERES     (matrix) mixed katakana binary digits hex
   --fps N           fotogramas por segundo (matrix 15, el resto 30)
   --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
-  --scale N         (galaga) pixeles por pixel de sprite; (pacman, snake, tron) pixeles por casilla (por defecto, segun la pantalla)
+  --scale N         (galaga) pixeles por pixel de sprite; (pacman, snake, tron) pixeles por casilla; (equalizer) tamano del LED (ancho doble que alto) (por defecto, segun la pantalla)
   --hud             (galaga, pacman, snake, tron) puntuacion, nivel/ronda y vidas
   --waybar / --fuzzel      el color tambien en waybar / fuzzel
   --no-waybar --no-fuzzel --no-hud   apagan una bandera
@@ -665,7 +701,7 @@ fn main() {
         }
         i += 2;
     }
-    if !["matrix", "galaga", "pacman", "snake", "tron"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron)"); std::process::exit(2) }
+    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer)"); std::process::exit(2) }
     if fps <= 0.0 { fps = if scene_name == "matrix" { 15.0 } else { 30.0 }; }
     let pals: Vec<Pal> = if color.to_lowercase() == "rainbow" {
         NEON.iter().map(|(_, c)| make_pal(*c)).collect()
@@ -676,12 +712,10 @@ fn main() {
         }
     };
     if waybar {
-        if color.to_lowercase() == "rainbow" { eprintln!("waybar: rainbow no tiene un color unico; se ignora --waybar"); waybar_apply(None); waybar = false; }
-        else { waybar_apply(parse_color(&color)); }
+        waybar_apply(accent_of(&color));
     }
     if fuzzel {
-        if color.to_lowercase() == "rainbow" { eprintln!("fuzzel: rainbow no tiene un color unico; se ignora --fuzzel"); fuzzel_apply(None); fuzzel = false; }
-        else { fuzzel_apply(parse_color(&color)); }
+        fuzzel_apply(accent_of(&color));
     }
     let chars = charset(&set);
     let (painter, scene): (Painter, Box<dyn Scene>) = if scene_name == "galaga" {
@@ -690,6 +724,8 @@ fn main() {
         (Painter::plain(), Box::new(pacman::Pacman::new(pals, scale, hud)))
     } else if scene_name == "snake" {
         (Painter::plain(), Box::new(snake::Snake::new(pals, scale, hud)))
+    } else if scene_name == "equalizer" {
+        (Painter::plain(), Box::new(equalizer::Equalizer::new(pals, scale)))
     } else if scene_name == "tron" {
         (Painter::plain(), Box::new(tron::Tron::new(pals, scale, hud)))
     } else {

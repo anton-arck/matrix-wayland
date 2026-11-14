@@ -44,6 +44,11 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
 
   ![tron con rainbow](docs/tron.png)
 
+- **`equalizer`**: analizador de espectro con barras de LED cuadrados, como los ecualizadores de las
+  cadenas de música: caída suave, marcador de pico y LED apagados tenues. No captura audio: simula una
+  pista (bombo, caja, hi-hats, cambios de energía y de tempo). Con `rainbow`, verde → amarillo → rojo
+  según la altura. `--scale N` fija el alto base del LED en píxeles (el ancho es el doble).
+
 ## Uso
 
 ```
@@ -56,9 +61,9 @@ matrix-wayland start --foreground            # primer plano, para depurar
 ```
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `#rrggbb` o
-`rainbow`), `--scene matrix|galaga|pacman|snake|tron`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
+`rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
-`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; por defecto según la pantalla), `--hud`,
+`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer: tamaño del LED; por defecto según la pantalla), `--hud`,
 `--waybar` y `--fuzzel` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
@@ -89,7 +94,10 @@ Con `--waybar`, matrix-wayland escribe en `~/.config/waybar/matrix-colors.css` l
 `matrix_fg` (texto e iconos = el color elegido), `matrix_bar_bg` y `matrix_mod_bg` (negro),
 `matrix_mod_hover` (el color al 25 %) y `matrix_accent`, y manda `SIGUSR2` a waybar para
 recargar el estilo. Al parar, el fichero queda vacío y vuelven tus colores por defecto.
-Con `-c rainbow` se ignora (no hay un color único).
+Con `-c rainbow`, waybar y fuzzel también van en modo rainbow: en waybar cada módulo y cada botón de
+workspace lleva un neón distinto, alternados (cian, magenta, amarillo, verde...), con fondos negros y
+fuzzel con un neón por elemento. Esto asume los ids de módulo del `style.css` de ejemplo de abajo
+(`#cpu`, `#clock`, `#workspaces button`...).
 
 Pon esto al principio de tu `style.css` y usa las variables en lugar de colores fijos:
 
