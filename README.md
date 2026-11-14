@@ -60,6 +60,8 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   `equalizer`, **cubre toda la pantalla sin márgenes** (los LED se estiran para llenarla justo). Mismas
   opciones que `equalizer` (audio real, `--simulate`, `--scale`, `--bar-width`, `rainbow`).
 
+  ![spectrum](docs/spectrum.gif)
+
 - **`scope`**: osciloscopio mono como el Scope de Sonic Pi: dibuja la forma de onda de lo que suena
   (misma captura con `parec`), con disparo en cruce por cero para que la onda quede quieta y ganancia
   automática. Con `rainbow`, un degradado recorre los neones de izquierda a derecha. `--scale N` fija

@@ -180,7 +180,7 @@ impl Equalizer {
 
     fn color(&self, r: i32) -> u32 {
         let f = r as f32 / self.rows as f32;
-        if f < 0.6 { self.on[0] } else if f < 0.82 { self.on[1] } else { self.on[2] }
+        if f < 0.5 { self.on[0] } else if f < 0.75 { self.on[1] } else { self.on[2] }
     }
 
     /// Objetivo (0..1) de cada barra a partir de la musica simulada.
