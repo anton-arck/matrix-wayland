@@ -1,4 +1,4 @@
-//! Escena "equalizer": analizador de espectro con barras de LED rectangulares (como los
+//! Escenas "equalizer" y "spectrum" (la misma pero en espejo): analizador de espectro con barras de LED rectangulares (como los
 //! ecualizadores de las cadenas de musica), con caida suave y marcador de pico.
 //! Reacciona a lo que suena de verdad: `parec` captura el monitor de la salida por defecto
 //! (PipeWire/PulseAudio) y una FFT propia reparte el espectro en barras logaritmicas. Con
@@ -130,7 +130,9 @@ impl Spectrum {
 pub struct Equalizer {
     rng: Rng,
     t_arg: i32,
+    bar_w: i32, // ancho de barra en px (0 = el doble del alto base)
     audio: Option<Shared>,
+    mirror: bool, // barras desde la linea central hacia arriba y hacia abajo
     spec: Spectrum,
     tgt: Vec<f32>,
     on: [u32; 3],  // color de los LED encendidos: bajo, medio, alto
@@ -150,7 +152,7 @@ fn scale(c: u32, k: f32) -> u32 {
 }
 
 impl Equalizer {
-    pub fn new(pals: Vec<Pal>, tile: i32, simulate: bool) -> Self {
+    pub fn new(pals: Vec<Pal>, tile: i32, simulate: bool, mirror: bool, bar_w: i32) -> Self {
         let audio = if simulate { None } else { spawn_capture() };
         if !simulate && audio.is_none() { eprintln!("equalizer: no hay parec (pulseaudio-utils / pipewire-pulse); se simula la musica"); }
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
@@ -162,7 +164,7 @@ impl Equalizer {
             [p.bands[0], p.bands[0], p.head]
         };
         Equalizer {
-            rng: Rng(seed | 1), t_arg: tile, audio, spec: Spectrum::new(), tgt: vec![], on, off: scale(pals[0].bands[0], 0.07),
+            rng: Rng(seed | 1), t_arg: tile, bar_w, audio, mirror, spec: Spectrum::new(), tgt: vec![], on, off: scale(pals[0].bands[0], 0.07),
             peak_col: pals[0].head,
             led: 24, ledh: 8, gap: 2, cols: 0, rows: 0, ox: 0, oy: 0,
             lvl: vec![], peak: vec![], hold: vec![], vel: vec![], noise: vec![],
@@ -250,10 +252,15 @@ impl Equalizer {
             let lit = (self.lvl[i] * self.rows as f32).round() as i32;
             let pk = ((self.peak[i] * self.rows as f32).round() as i32 - 1).clamp(0, self.rows - 1);
             for r in 0..self.rows {
-                let y = self.oy - (r + 1) * py + self.gap;
                 let c = if r == pk && pk >= lit && self.peak[i] > 0.02 { self.peak_col }
                     else if r < lit { self.color(r) } else { self.off };
-                p.rect(x, y, self.led, self.ledh, c);
+                if self.mirror {
+                    // la fila 0 de cada mitad queda pegada a la linea central
+                    p.rect(x, self.oy - (r + 1) * py + self.gap, self.led, self.ledh, c);
+                    p.rect(x, self.oy + r * py + self.gap, self.led, self.ledh, c);
+                } else {
+                    p.rect(x, self.oy - (r + 1) * py + self.gap, self.led, self.ledh, c);
+                }
             }
         }
     }
@@ -265,15 +272,17 @@ impl Scene for Equalizer {
         p.clear();
         // LED rectangulares: el doble de anchos que el lado base y bastante mas bajos
         let side = if self.t_arg > 0 { self.t_arg } else { (h as i32 / 38).clamp(8, 40) };
-        self.led = side * 2;
+        self.led = if self.bar_w > 0 { self.bar_w } else { side * 2 };
         self.ledh = (side * 3 / 5).max(3);
         self.gap = (side / 5).max(2);
         let (px, py) = (self.led + self.gap, self.ledh + self.gap);
         let margin = (w as i32 / 24).max(px);
         self.cols = (((w as i32 - 2 * margin) / px).max(4)) as usize;
-        self.rows = (((h as i32 * 88 / 100) / py).max(4)).min(80);
+        let span = if self.mirror { h as i32 * 88 / 100 / 2 } else { h as i32 * 88 / 100 };
+        self.rows = ((span / py).max(4)).min(80);
         self.ox = (w as i32 - self.cols as i32 * px + self.gap) / 2;
-        self.oy = h as i32 - (h as i32 - self.rows * py) / 2 + self.gap; // bloque centrado
+        self.oy = if self.mirror { h as i32 / 2 - self.gap / 2 } // linea central
+            else { h as i32 - (h as i32 - self.rows * py) / 2 + self.gap }; // bloque centrado
         let n = self.cols;
         self.lvl = vec![0.0; n];
         self.peak = vec![0.0; n];
@@ -294,8 +303,8 @@ mod tests {
 
     #[test]
     fn levels_stay_in_range() {
-        for pals in [vec![crate::make_pal([0, 255, 0])], crate::NEON.iter().map(|(_, c)| crate::make_pal(*c)).collect()] {
-            let mut s = Equalizer::new(pals, 0, true);
+        for mirror in [false, true] { for pals in [vec![crate::make_pal([0, 255, 0])], crate::NEON.iter().map(|(_, c)| crate::make_pal(*c)).collect()] {
+            let mut s = Equalizer::new(pals, 0, true, mirror, 0);
             let mut p = Painter::plain();
             for &(w, h) in &[(640usize, 360usize), (1920, 1080), (160, 100)] {
                 s.resize(&mut p, w, h);
@@ -303,7 +312,7 @@ mod tests {
                 assert!(s.lvl.iter().chain(s.peak.iter()).all(|&v| (0.0..=1.0).contains(&v)));
                 assert!(s.lvl.iter().cloned().fold(0.0, f32::max) > 0.05);
             }
-        }
+        } }
     }
 }
 

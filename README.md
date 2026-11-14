@@ -52,7 +52,12 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   `--simulate` (o su ausencia) usa una pista simulada con bombo, caja y hi-hats. La captura se marca
   como monitor, así que el módulo `privacy` de waybar no muestra el icono de micrófono. Con `rainbow`,
   verde → amarillo → rojo según la altura. `--scale N` fija el alto base del LED en píxeles (el ancho es
-  el doble).
+  el doble). `--bar-width PX` fija el ancho de cada barra por separado (p. ej. `--bar-width 6` para barras
+  finas conservando el alto del LED).
+
+- **`spectrum`**: el mismo analizador, pero **en espejo**: las barras salen de una línea central y crecen
+  hacia arriba y hacia abajo a la vez, como el visor de espectro de Sonic Pi. Mismas opciones que
+  `equalizer` (audio real, `--simulate`, `--scale`, `rainbow`).
 
 ## Uso
 
@@ -66,10 +71,10 @@ matrix-wayland start --foreground            # primer plano, para depurar
 ```
 
 Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `#rrggbb` o
-`rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
+`rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
-`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer: tamaño del LED; por defecto según la pantalla), `--hud`,
-`--simulate` (equalizer), `--waybar` y `--fuzzel` (ver abajo).
+`--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; por defecto según la pantalla), `--hud`,
+`--bar-width PX` y `--simulate` (equalizer y spectrum), `--waybar` y `--fuzzel` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apagan una bandera, y
