@@ -425,7 +425,7 @@ fn cmd_stop(keep_theme: bool) -> bool {
 // escribas gana sobre lo recordado; --no-X apaga una bandera y --reset olvida todo.
 // Se guardan en $XDG_STATE_HOME/matrix-wayland/options.
 const VALUE_OPTS: [&str; 7] = ["-c", "-s", "--fps", "--size", "--font", "--scene", "--scale"];
-const FLAG_OPTS: [&str; 3] = ["--waybar", "--fuzzel", "--hud"];
+const FLAG_OPTS: [&str; 4] = ["--waybar", "--fuzzel", "--hud", "--simulate"];
 
 fn state_file() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
@@ -652,9 +652,10 @@ fn usage() -> ! {
   --fps N           fotogramas por segundo (matrix 15, el resto 30)
   --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
   --scale N         (galaga) pixeles por pixel de sprite; (pacman, snake, tron) pixeles por casilla; (equalizer) tamano del LED (ancho doble que alto) (por defecto, segun la pantalla)
+  --simulate        (equalizer) musica simulada en vez de captar el audio real
   --hud             (galaga, pacman, snake, tron) puntuacion, nivel/ronda y vidas
   --waybar / --fuzzel      el color tambien en waybar / fuzzel
-  --no-waybar --no-fuzzel --no-hud   apagan una bandera
+  --no-waybar --no-fuzzel --no-hud --no-simulate   apagan una bandera
   --reset           olvida las opciones recordadas
 Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: primer plano.
   stop --keep-theme  apaga la escena y deja los colores de waybar/fuzzel
@@ -665,6 +666,7 @@ Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: p
 fn main() {
     let (mut color, mut set, mut fps, mut size) = ("green".to_string(), "mixed".to_string(), 0.0f64, 16.0f32);
     let (mut scene_name, mut scale, mut hud) = ("matrix".to_string(), 0i32, false);
+    let mut simulate = false;
     let mut font_path = "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc".to_string();
     let mut a: Vec<String> = std::env::args().skip(1).collect();
     let mut foreground = false;
@@ -688,6 +690,7 @@ fn main() {
         if a[i] == "--waybar" { waybar = true; i += 1; continue; }
         if a[i] == "--fuzzel" { fuzzel = true; i += 1; continue; }
         if a[i] == "--hud" { hud = true; i += 1; continue; }
+        if a[i] == "--simulate" { simulate = true; i += 1; continue; }
         let val = a.get(i + 1).cloned();
         match a[i].as_str() {
             "-c" => color = val.unwrap_or_else(|| usage()),
@@ -725,7 +728,7 @@ fn main() {
     } else if scene_name == "snake" {
         (Painter::plain(), Box::new(snake::Snake::new(pals, scale, hud)))
     } else if scene_name == "equalizer" {
-        (Painter::plain(), Box::new(equalizer::Equalizer::new(pals, scale)))
+        (Painter::plain(), Box::new(equalizer::Equalizer::new(pals, scale, simulate)))
     } else if scene_name == "tron" {
         (Painter::plain(), Box::new(tron::Tron::new(pals, scale, hud)))
     } else {

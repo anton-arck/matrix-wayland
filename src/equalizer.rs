@@ -1,11 +1,138 @@
-//! Escena "equalizer": analizador de espectro con barras de LED cuadrados (como los ecualizadores
-//! de las cadenas de musica). No captura audio: simula una pista con bombo, caja y hi-hats que
-//! excitan las barras graves, medias y agudas, con caida suave y marcador de pico.
+//! Escena "equalizer": analizador de espectro con barras de LED rectangulares (como los
+//! ecualizadores de las cadenas de musica), con caida suave y marcador de pico.
+//! Reacciona a lo que suena de verdad: `parec` captura el monitor de la salida por defecto
+//! (PipeWire/PulseAudio) y una FFT propia reparte el espectro en barras logaritmicas. Con
+//! `--simulate` (o si no hay `parec`) simula una pista con bombo, caja y hi-hats.
 use super::{Painter, Pal, Rng, Scene};
+use std::io::Read;
+use std::sync::{Arc, Mutex};
+
+const RATE: usize = 44100;
+const FFT_N: usize = 2048;
+
+extern "C" { fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32; }
+
+/// Ultimas muestras capturadas (mono, -1..1), compartidas con el hilo lector.
+type Shared = Arc<Mutex<Vec<f32>>>;
+
+/// Hilo que lanza `parec` sobre el monitor de la salida por defecto y vuelca las muestras.
+/// Si parec termina (p. ej. PipeWire se reinicia) lo relanza a los 2 s.
+fn spawn_capture() -> Option<Shared> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut probe = Command::new("parec");
+    probe.arg("--version").stdout(Stdio::null()).stderr(Stdio::null());
+    if probe.status().is_err() { return None; }
+    let shared: Shared = Arc::new(Mutex::new(vec![0.0; FFT_N]));
+    let out = shared.clone();
+    std::thread::spawn(move || loop {
+        let mut c = Command::new("parec");
+        c.args(["-d", "@DEFAULT_MONITOR@", "--format=s16le", "--rate=44100", "--channels=1", "--latency-msec=20", "--property=stream.monitor=true"])
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+        // que parec muera con nosotros (PR_SET_PDEATHSIG = 1, SIGTERM = 15)
+        unsafe { c.pre_exec(|| { prctl(1, 15, 0, 0, 0); Ok(()) }); }
+        if let Ok(mut child) = c.spawn() {
+            if let Some(mut so) = child.stdout.take() {
+                let mut buf = [0u8; 2048];
+                while let Ok(n) = so.read(&mut buf) {
+                    if n == 0 { break; }
+                    let new: Vec<f32> = buf[..n / 2 * 2].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+                    let mut v = out.lock().unwrap();
+                    v.extend(new);
+                    let excess = v.len().saturating_sub(FFT_N);
+                    v.drain(..excess);
+                }
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    });
+    Some(shared)
+}
+
+/// FFT radix-2 in situ (len potencia de 2).
+fn fft(re: &mut [f32], im: &mut [f32]) {
+    let n = re.len();
+    let mut j = 0;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 { j ^= bit; bit >>= 1; }
+        j ^= bit;
+        if i < j { re.swap(i, j); im.swap(i, j); }
+    }
+    let mut len = 2;
+    while len <= n {
+        let ang = -2.0 * std::f32::consts::PI / len as f32;
+        let (wr, wi) = (ang.cos(), ang.sin());
+        for s in (0..n).step_by(len) {
+            let (mut cr, mut ci) = (1.0f32, 0.0f32);
+            for k in 0..len / 2 {
+                let (a, b) = (s + k, s + k + len / 2);
+                let (tr, ti) = (re[b] * cr - im[b] * ci, re[b] * ci + im[b] * cr);
+                re[b] = re[a] - tr; im[b] = im[a] - ti;
+                re[a] += tr; im[a] += ti;
+                let nr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = nr;
+            }
+        }
+        len <<= 1;
+    }
+}
+
+/// Espectro en barras logaritmicas (45 Hz - 14 kHz) normalizado a 0..1 con ganancia automatica.
+struct Spectrum { win: Vec<f32>, re: Vec<f32>, im: Vec<f32>, top: f32 }
+
+impl Spectrum {
+    fn new() -> Self {
+        let win = (0..FFT_N).map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / FFT_N as f32).cos()).collect();
+        Spectrum { win, re: vec![0.0; FFT_N], im: vec![0.0; FFT_N], top: -40.0 }
+    }
+
+    /// Rango de frecuencias (Hz) de la barra i de n.
+    fn edges(i: usize, n: usize) -> (f32, f32) {
+        let f = |k: usize| 45.0 * (14000.0f32 / 45.0).powf(k as f32 / n as f32);
+        (f(i), f(i + 1))
+    }
+
+    fn bars(&mut self, samples: &[f32], dt: f32, out: &mut [f32]) {
+        let n = out.len();
+        for i in 0..FFT_N { self.re[i] = samples[i] * self.win[i]; self.im[i] = 0.0; }
+        fft(&mut self.re, &mut self.im);
+        let bin_hz = RATE as f32 / FFT_N as f32;
+        let mag = |b: f32| { // interpolacion lineal entre bins vecinos
+            let (b0, fr) = (b.floor() as usize, b.fract());
+            let m = |k: usize| { let k = k.min(FFT_N / 2 - 1); (self.re[k] * self.re[k] + self.im[k] * self.im[k]).sqrt() };
+            m(b0) * (1.0 - fr) + m(b0 + 1) * fr
+        };
+        let mut db = vec![-120.0f32; n];
+        let mut frame_max = -120.0f32;
+        for i in 0..n {
+            let (lo, hi) = Self::edges(i, n);
+            let (b_lo, b_hi) = (lo / bin_hz, hi / bin_hz);
+            let mut m = mag((b_lo + b_hi) / 2.0);
+            let mut b = b_lo.ceil();
+            while b < b_hi { m = m.max(mag(b)); b += 1.0; }
+            let amp = 4.0 * m / FFT_N as f32; // 1.0 = seno a fondo de escala
+            // +3 dB por octava: la musica cae hacia los agudos y asi las barras altas no quedan vacias
+            let tilt = 3.0 * ((lo * hi).sqrt() / 1000.0).log2();
+            db[i] = 20.0 * amp.max(1e-7).log10() + tilt;
+            frame_max = frame_max.max(db[i]);
+        }
+        // referencia: sube al instante con el pico y baja lento; con suelo para no amplificar el ruido
+        self.top = if frame_max > self.top { frame_max } else { (self.top - 4.0 * dt).max(frame_max) };
+        let top = self.top.max(-42.0);
+        for i in 0..n { out[i] = ((db[i] - (top - 48.0)) / 48.0).clamp(0.0, 1.0); }
+    }
+}
 
 pub struct Equalizer {
     rng: Rng,
     t_arg: i32,
+    audio: Option<Shared>,
+    spec: Spectrum,
+    tgt: Vec<f32>,
     on: [u32; 3],  // color de los LED encendidos: bajo, medio, alto
     off: u32,      // LED apagado
     peak_col: u32,
@@ -23,7 +150,9 @@ fn scale(c: u32, k: f32) -> u32 {
 }
 
 impl Equalizer {
-    pub fn new(pals: Vec<Pal>, tile: i32) -> Self {
+    pub fn new(pals: Vec<Pal>, tile: i32, simulate: bool) -> Self {
+        let audio = if simulate { None } else { spawn_capture() };
+        if !simulate && audio.is_none() { eprintln!("equalizer: no hay parec (pulseaudio-utils / pipewire-pulse); se simula la musica"); }
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
         // rainbow: verde -> amarillo -> rojo, como los VU clasicos (orden NEON: verde=0, amarillo=7, rojo=8)
         let on = if pals.len() >= 9 {
@@ -33,7 +162,7 @@ impl Equalizer {
             [p.bands[0], p.bands[0], p.head]
         };
         Equalizer {
-            rng: Rng(seed | 1), t_arg: tile, on, off: scale(pals[0].bands[0], 0.07),
+            rng: Rng(seed | 1), t_arg: tile, audio, spec: Spectrum::new(), tgt: vec![], on, off: scale(pals[0].bands[0], 0.07),
             peak_col: pals[0].head,
             led: 24, ledh: 8, gap: 2, cols: 0, rows: 0, ox: 0, oy: 0,
             lvl: vec![], peak: vec![], hold: vec![], vel: vec![], noise: vec![],
@@ -46,7 +175,8 @@ impl Equalizer {
         if f < 0.6 { self.on[0] } else if f < 0.82 { self.on[1] } else { self.on[2] }
     }
 
-    fn drive(&mut self, dt: f32) {
+    /// Objetivo (0..1) de cada barra a partir de la musica simulada.
+    fn simulate(&mut self, dt: f32) {
         self.t += dt;
         // la energia sube y baja lentamente (estrofa / estribillo) y el tempo cambia de vez en cuando
         let energy = 0.72 + 0.28 * (self.t * 0.11).sin() * (self.t * 0.037).cos();
@@ -78,7 +208,22 @@ impl Equalizer {
                 + self.snare * g(0.42, 0.2) * 0.8
                 + self.hat * x.powf(1.5) * 0.7
                 + base) * energy * jitter;
-            let target = target.clamp(0.0, 1.0);
+            self.tgt[i] = target.clamp(0.0, 1.0);
+        }
+    }
+
+    fn drive(&mut self, dt: f32) {
+        let n = self.cols;
+        if let Some(a) = &self.audio {
+            let samples = a.lock().unwrap().clone();
+            let mut t = std::mem::take(&mut self.tgt);
+            self.spec.bars(&samples, dt, &mut t);
+            self.tgt = t;
+        } else {
+            self.simulate(dt);
+        }
+        for i in 0..n {
+            let target = self.tgt[i];
             if target > self.lvl[i] {
                 self.lvl[i] += (target - self.lvl[i]) * (1.0 - (-dt * 40.0).exp());
             } else {
@@ -135,6 +280,7 @@ impl Scene for Equalizer {
         self.hold = vec![0.0; n];
         self.vel = vec![0.0; n];
         self.noise = vec![0.5; n];
+        self.tgt = vec![0.0; n];
     }
     fn step(&mut self, p: &mut Painter, dt: f32) {
         self.drive(dt.min(0.1));
@@ -149,7 +295,7 @@ mod tests {
     #[test]
     fn levels_stay_in_range() {
         for pals in [vec![crate::make_pal([0, 255, 0])], crate::NEON.iter().map(|(_, c)| crate::make_pal(*c)).collect()] {
-            let mut s = Equalizer::new(pals, 0);
+            let mut s = Equalizer::new(pals, 0, true);
             let mut p = Painter::plain();
             for &(w, h) in &[(640usize, 360usize), (1920, 1080), (160, 100)] {
                 s.resize(&mut p, w, h);
@@ -158,5 +304,33 @@ mod tests {
                 assert!(s.lvl.iter().cloned().fold(0.0, f32::max) > 0.05);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod audio_tests {
+    use super::*;
+
+    #[test]
+    fn sine_lights_the_right_bar() {
+        let mut sp = Spectrum::new();
+        let n = 48;
+        for &f in &[100.0f32, 440.0, 1000.0, 5000.0, 12000.0] {
+            let x: Vec<f32> = (0..FFT_N).map(|i| 0.5 * (2.0 * std::f32::consts::PI * f * i as f32 / RATE as f32).sin()).collect();
+            let mut out = vec![0.0; n];
+            sp.top = -40.0;
+            sp.bars(&x, 0.03, &mut out);
+            let best = (0..n).max_by(|&a, &b| out[a].partial_cmp(&out[b]).unwrap()).unwrap();
+            let (lo, hi) = Spectrum::edges(best, n);
+            assert!(f >= lo * 0.85 && f <= hi * 1.15, "{f} Hz cae en la barra {best} ({lo}-{hi})");
+        }
+    }
+
+    #[test]
+    fn silence_is_dark() {
+        let mut sp = Spectrum::new();
+        let mut out = vec![1.0; 32];
+        sp.bars(&vec![0.0; FFT_N], 0.03, &mut out);
+        assert!(out.iter().all(|&v| v == 0.0));
     }
 }

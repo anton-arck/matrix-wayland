@@ -44,10 +44,15 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
 
   ![tron con rainbow](docs/tron.png)
 
-- **`equalizer`**: analizador de espectro con barras de LED cuadrados, como los ecualizadores de las
-  cadenas de música: caída suave, marcador de pico y LED apagados tenues. No captura audio: simula una
-  pista (bombo, caja, hi-hats, cambios de energía y de tempo). Con `rainbow`, verde → amarillo → rojo
-  según la altura. `--scale N` fija el alto base del LED en píxeles (el ancho es el doble).
+- **`equalizer`**: analizador de espectro con barras de LED rectangulares, como los ecualizadores de las
+  cadenas de música, con caída suave y marcador de pico. **Reacciona a lo que suena**: `parec` capta el
+  monitor de la salida por defecto (PipeWire o PulseAudio), una FFT propia reparte el espectro en barras
+  logarítmicas (45 Hz – 14 kHz) y la ganancia se ajusta sola. Sin audio, las barras caen a cero. No añade
+  dependencias de compilación, pero necesita `parec` (paquete `pipewire-pulse` / `pulseaudio-utils`);
+  `--simulate` (o su ausencia) usa una pista simulada con bombo, caja y hi-hats. La captura se marca
+  como monitor, así que el módulo `privacy` de waybar no muestra el icono de micrófono. Con `rainbow`,
+  verde → amarillo → rojo según la altura. `--scale N` fija el alto base del LED en píxeles (el ancho es
+  el doble).
 
 ## Uso
 
@@ -64,7 +69,7 @@ Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `
 `rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
 `--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer: tamaño del LED; por defecto según la pantalla), `--hud`,
-`--waybar` y `--fuzzel` (ver abajo).
+`--simulate` (equalizer), `--waybar` y `--fuzzel` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apagan una bandera, y
