@@ -82,7 +82,7 @@ Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `
 `rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
 `--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; scope: grosor de la línea; por defecto según la pantalla), `--hud`,
-`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako`, `--gtklock` y `--zellij` (ver abajo).
+`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako`, `--gtklock`, `--zellij` y `--nvim` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel`, `--no-kitty`, `--no-firedragon` y `--no-hud` apagan una bandera, y
@@ -177,6 +177,22 @@ apagar da error en vez de dejar un tema roto.
 
 ```
 theme "matrix"
+```
+
+## Color de nvim (`--nvim`, opcional)
+
+Con `--nvim` escribe `~/.local/state/nvim/matrix-colors.lua`, que cambia los colores de texto, sintaxis,
+selección y búsqueda **encima de tu colorscheme** (conserva su fondo, transparente o no), y le pide a cada
+nvim en marcha (`$XDG_RUNTIME_DIR/nvim.PID.0`) que recargue el colorscheme. Inactivo, el fichero es solo un
+comentario y vuelve tu colorscheme. Añade esto a tu config (en LazyVim, `lua/config/autocmds.lua`):
+
+```lua
+local function matrix_colors()
+  local f = vim.fn.stdpath("state") .. "/matrix-colors.lua"
+  if vim.uv.fs_stat(f) then pcall(dofile, f) end
+end
+vim.api.nvim_create_autocmd("ColorScheme", { callback = matrix_colors })
+matrix_colors()
 ```
 
 ## Color de FireDragon (`--firedragon`, opcional)

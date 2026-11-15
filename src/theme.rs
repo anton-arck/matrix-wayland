@@ -18,7 +18,7 @@ pub struct Target {
     reload: fn(),
 }
 
-pub const TARGETS: [Target; 8] = [
+pub const TARGETS: [Target; 9] = [
     Target { name: "waybar", flag: "--waybar", write: write_waybar_css, reload: reload_waybar },
     Target { name: "fuzzel", flag: "--fuzzel", write: write_fuzzel_ini, reload: || {} }, // se lee al abrirlo
     Target { name: "kitty", flag: "--kitty", write: write_kitty_conf, reload: reload_kitty },
@@ -27,6 +27,7 @@ pub const TARGETS: [Target; 8] = [
     Target { name: "gtklock", flag: "--gtklock", write: write_gtklock_css, reload: || {} }, // se lee al bloquear
     Target { name: "mako", flag: "--mako", write: write_mako_conf, reload: reload_mako },
     Target { name: "zellij", flag: "--zellij", write: write_zellij_theme, reload: reload_zellij },
+    Target { name: "nvim", flag: "--nvim", write: write_nvim_lua, reload: reload_nvim },
 ];
 
 impl Target {
@@ -350,6 +351,59 @@ fn reload_zellij() {
     if let Ok(f) = std::fs::OpenOptions::new().append(true).open(&cfg) { let _ = f.set_modified(std::time::SystemTime::now()); }
 }
 
+// ---------- nvim (--nvim) ----------
+// Escribe `~/.local/state/nvim/matrix-colors.lua`: sobrescribe grupos de resaltado conservando el
+// fondo y el resto del colorscheme del usuario. El config de nvim debe hacer `dofile` de ese fichero
+// en cada `ColorScheme` (ver el README). Inactivo es solo un comentario y el colorscheme queda intacto.
+fn nvim_lua_body(accent: Option<Accent>) -> String {
+    let Some(a) = accent else { return "-- generado por matrix-wayland: inactivo, se usa el colorscheme\n".to_string() };
+    let s = scheme(a);
+    format!(
+        "-- generado por matrix-wayland\nlocal fg, hi, url, dim, mid = \"#{fg}\", \"#{hi}\", \"#{url}\", \"#{dim}\", \"#{mid}\"\nlocal k = \"#000000\"\n\
+         local map = {{\n\
+         \x20 Normal = {{ fg = fg }}, NormalFloat = {{ fg = fg }}, FloatBorder = {{ fg = hi }}, WinSeparator = {{ fg = dim }},\n\
+         \x20 Comment = {{ fg = mid, italic = true }}, String = {{ fg = url }}, Character = {{ fg = url }}, Number = {{ fg = url }},\n\
+         \x20 Boolean = {{ fg = url }}, Constant = {{ fg = url }}, Identifier = {{ fg = fg }}, Function = {{ fg = hi, bold = true }},\n\
+         \x20 Statement = {{ fg = hi }}, Keyword = {{ fg = hi }}, Operator = {{ fg = fg }}, Type = {{ fg = url }}, Special = {{ fg = url }},\n\
+         \x20 PreProc = {{ fg = mid }}, Title = {{ fg = hi, bold = true }}, Directory = {{ fg = hi }},\n\
+         \x20 LineNr = {{ fg = mid }}, CursorLineNr = {{ fg = hi, bold = true }}, Visual = {{ bg = dim }},\n\
+         \x20 Search = {{ fg = k, bg = hi }}, IncSearch = {{ fg = k, bg = url }}, MatchParen = {{ fg = k, bg = hi }},\n\
+         \x20 Pmenu = {{ fg = fg }}, PmenuSel = {{ fg = k, bg = hi }}, StatusLine = {{ fg = hi }},\n\
+         \x20 [\"@variable\"] = {{ fg = fg }}, [\"@property\"] = {{ fg = fg }}, [\"@keyword\"] = {{ fg = hi }}, [\"@function\"] = {{ fg = hi, bold = true }},\n\
+         \x20 [\"@string\"] = {{ fg = url }}, [\"@number\"] = {{ fg = url }}, [\"@constant\"] = {{ fg = url }}, [\"@type\"] = {{ fg = url }},\n\
+         \x20 [\"@comment\"] = {{ fg = mid, italic = true }}, [\"@operator\"] = {{ fg = fg }}, [\"@punctuation\"] = {{ fg = mid }},\n\
+         }}\n\
+         for name, o in pairs(map) do\n\
+         \x20 local c = vim.api.nvim_get_hl(0, {{ name = name, link = false }})\n\
+         \x20 vim.api.nvim_set_hl(0, name, vim.tbl_extend(\"force\", c, o))\n\
+         end\n",
+        fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid)
+}
+
+fn write_nvim_lua(accent: Option<Accent>) -> Result<(), String> {
+    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("state")))
+        .ok_or("no se pudo resolver ~/.local/state")?;
+    let dir = state.join("nvim");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    atomic_write(&dir.join("matrix-colors.lua"), &nvim_lua_body(accent))
+}
+
+/// Cada nvim en marcha escucha en `$XDG_RUNTIME_DIR/nvim.<pid>.0`; se le manda recargar el colorscheme
+/// (lo que dispara el `ColorScheme` que relee el fichero). Solo a procesos vivos y con limite de tiempo.
+fn reload_nvim() {
+    let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) else { return };
+    let Ok(rd) = std::fs::read_dir(&rt) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let Some(pid) = name.to_str().and_then(|n| n.strip_prefix("nvim.")).and_then(|n| n.split('.').next()).and_then(|n| n.parse::<i32>().ok()) else { continue };
+        if !Path::new(&format!("/proc/{pid}")).exists() { continue; }
+        let sock = e.path();
+        run_quiet("timeout", &["2", "nvim", "--server", &sock.to_string_lossy(), "--remote-expr",
+            "execute('if exists(\"g:colors_name\") | execute \"colorscheme \" . g:colors_name | endif')"]);
+    }
+}
+
 // ---------- gtklock (--gtklock) ----------
 // El style.css de gtklock define colores por defecto con `@define-color matrix_*` y despues hace
 // `@import url("matrix-colors.css");` (el import sobrescribe los defaults); ver el README.
@@ -392,5 +446,19 @@ mod tests {
         assert!(body.contains("    matrix {") && !body.contains("matrix-off"));
         assert!(zellij_theme_body(None, Path::new("/nonexistent")).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod nvim_tests {
+    use super::*;
+
+    #[test]
+    fn nvim_lua_active_and_off() {
+        let on = nvim_lua_body(Some(Accent::One([0, 255, 65])));
+        assert!(on.contains("\"#00ff41\"") && on.contains("nvim_set_hl") && on.contains("nvim_get_hl"));
+        assert_eq!(on.matches('{').count(), on.matches('}').count());
+        assert!(nvim_lua_body(None).starts_with("-- generado"));
+        if let Ok(p) = std::env::var("MATRIX_NVIM_DUMP") { std::fs::write(p, &on).unwrap(); }
     }
 }
