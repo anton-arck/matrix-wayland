@@ -82,7 +82,7 @@ Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `
 `rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
 `--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; scope: grosor de la línea; por defecto según la pantalla), `--hud`,
-`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako`, `--gtklock`, `--zellij` y `--nvim` (ver abajo).
+`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako`, `--gtklock`, `--zellij`, `--nvim`, `--starship` y `--lazygit` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel`, `--no-kitty`, `--no-firedragon` y `--no-hud` apagan una bandera, y
@@ -194,6 +194,25 @@ end
 vim.api.nvim_create_autocmd("ColorScheme", { callback = matrix_colors })
 matrix_colors()
 ```
+
+## Color de starship y lazygit (`--starship`, `--lazygit`, opcional)
+
+Ninguno de los dos tiene `include`, así que matrix-wayland reescribe **solo el bloque entre dos marcadores**
+(el resto del fichero no se toca). Añade estas dos líneas al principio de `~/.config/starship.toml` (antes de
+cualquier `[tabla]`) y las mismas en `~/.config/lazygit/config.yml`:
+
+```
+# >>> matrix-wayland >>>
+# <<< matrix-wayland <<<
+```
+
+- **starship:** el bloque define `palette = "matrix"` y sobrescribe los nombres `green`, `yellow`, `blue`,
+  `purple`, `cyan` y `white` (y sus `bright-`) con tonos del color elegido. El rojo no se toca, para que los
+  errores se vean. Starship relee el fichero en cada prompt.
+- **lazygit:** el bloque es `gui.theme` (bordes, selección, cambios sin añadir). No debe haber otra clave `gui:`
+  en el fichero. Se ve al abrir lazygit.
+
+Si faltan los marcadores, el destino avisa y no modifica nada. Inactivo, el bloque queda como un comentario.
 
 ## Color de FireDragon (`--firedragon`, opcional)
 
