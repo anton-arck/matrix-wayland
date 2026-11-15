@@ -358,7 +358,7 @@ fn reload_zellij() {
 // fondo y el resto del colorscheme del usuario. El config de nvim debe hacer `dofile` de ese fichero
 // en cada `ColorScheme` (ver el README). Inactivo es solo un comentario y el colorscheme queda intacto.
 fn nvim_lua_body(accent: Option<Accent>) -> String {
-    let Some(a) = accent else { return "-- generado por matrix-wayland: inactivo, se usa el colorscheme\n".to_string() };
+    let Some(a) = accent else { return "-- generado por matrix-wayland: inactivo, se usa el colorscheme\n_G.matrix_ll = nil\n".to_string() };
     let s = scheme(a);
     format!(
         "-- generado por matrix-wayland\nlocal fg, hi, url, dim, mid, faint = \"#{fg}\", \"#{hi}\", \"#{url}\", \"#{dim}\", \"#{mid}\", \"#{faint}\"\nlocal k = \"#000000\"\n\
@@ -390,41 +390,67 @@ fn nvim_lua_body(accent: Option<Accent>) -> String {
          \x20 SnacksDashboardNormal = {{ fg = fg }}, SnacksDashboardTerminal = {{ fg = fg }},\n\
          \x20 WhichKey = {{ fg = url }}, WhichKeyGroup = {{ fg = hi }}, WhichKeyDesc = {{ fg = fg }}, WhichKeySeparator = {{ fg = mid }},\n\
          }}\n\
-         local function apply(t)\n\
-         \x20 for name, o in pairs(t) do\n\
-         \x20   local c = vim.api.nvim_get_hl(0, {{ name = name, link = false }})\n\
-         \x20   vim.api.nvim_set_hl(0, name, vim.tbl_extend(\"force\", c, o))\n\
-         \x20 end\n\
-         end\n\
-         apply(map)\n\
-         -- lualine redefine sus grupos despues de ColorScheme: se reaplican con un pequeno retardo\n\
-         local ll = {{}}\n\
-         local modes = {{ normal = hi, insert = url, visual = mid, replace = url, command = mid, terminal = hi }}\n\
-         for m, bg in pairs(modes) do\n\
-         \x20 ll[\"lualine_a_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
-         \x20 for _, l in ipairs({{ \"b\", \"y\" }}) do ll[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = hi, bg = dim }} end\n\
-         \x20 for _, l in ipairs({{ \"c\", \"x\" }}) do ll[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = fg }} end\n\
-         \x20 ll[\"lualine_z_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
-         end\n\
-         ll.lualine_a_inactive = {{ fg = mid }}; ll.lualine_b_inactive = {{ fg = mid }}; ll.lualine_c_inactive = {{ fg = mid }}\n\
-         -- fondo negro en las secciones c/x (y en las flechas que las tocan), tambien en sus componentes\n\
-         local function black_bg()\n\
-         \x20 for name in pairs(vim.api.nvim_get_hl(0, {{}})) do\n\
-         \x20   local c = nil\n\
-         \x20   if name:match(\"^lualine_[cx]_\") then c = {{ bg = k }}\n\
-         \x20   elseif name:match(\"^lualine_transitional_\") then\n\
-         \x20     local from, to = name:match(\"^lualine_transitional_lualine_(%a)_\"), name:match(\"_to_lualine_(%a)_\")\n\
-         \x20     c = {{}}\n\
-         \x20     if from == \"c\" or from == \"x\" then c.fg = k end\n\
-         \x20     if to == \"c\" or to == \"x\" then c.bg = k end\n\
-         \x20   end\n\
-         \x20   if c and next(c) then apply({{ [name] = c }}) end\n\
-         \x20 end\n\
-         end\n\
-         apply(ll); black_bg()\n\
-         vim.defer_fn(function() apply(ll); black_bg(); pcall(vim.cmd, \"redrawstatus!\") end, 120)\n",
-        fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid, faint = s.faint)
+         ",
+        fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid, faint = s.faint) + NVIM_LUA_TAIL
 }
+
+/// Parte fija del Lua generado (usa los locals fg, hi, url, dim, mid, faint, k y la tabla `map`).
+const NVIM_LUA_TAIL: &str = r##"
+local function apply(t)
+  for name, o in pairs(t) do
+    local c = vim.api.nvim_get_hl(0, { name = name, link = false })
+    vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", c, o))
+  end
+end
+apply(map)
+
+-- lualine: cada grupo que crea pasa por highlight(); se corrige ahi para que sobreviva a sus setup()
+-- (ColorScheme, arranque tardio). Fondo negro en c/x, color en a/z, discreto en b/y.
+local modebg = { normal = hi, insert = url, visual = mid, replace = url, command = mid, terminal = hi, inactive = k }
+local function secbg(l, mode)
+  if l == "a" or l == "z" then return modebg[mode] or hi end
+  if l == "b" or l == "y" then return dim end
+  return k
+end
+_G.matrix_ll = { fix = function(name, fg_, bg_)
+  local fl, fm, tl, tm = name:match("^lualine_transitional_lualine_(%a)_(.-)_to_lualine_(%a)_(.-)$")
+  if fl then
+    return secbg(fl, fm:match("(%a+)$")), secbg(tl, tm:match("(%a+)$"))
+  end
+  local l, rest = name:match("^lualine_(%a)_(.+)$")
+  if not l then return fg_, bg_ end
+  local mode = rest:match("(%a+)$")
+  if rest == mode then -- grupo de la seccion (lualine_a_normal)
+    if l == "a" or l == "z" then return mode == "inactive" and mid or k, secbg(l, mode) end
+    if l == "b" or l == "y" then return (mode == "inactive" and mid or hi), secbg(l, mode) end
+    return (mode == "inactive" and mid or fg), k
+  end
+  return fg_, secbg(l, mode) -- componentes: conservan su color de texto
+end }
+local okh, H = pcall(require, "lualine.highlight")
+if okh and not H._matrix_wrapped then
+  local orig = H.highlight
+  H.highlight = function(name, fg_, bg_, gui, link)
+    local m = _G.matrix_ll
+    if m and not link then fg_, bg_ = m.fix(name, fg_, bg_) end
+    return orig(name, fg_, bg_, gui, link)
+  end
+  H._matrix_wrapped = true
+end
+-- los grupos que lualine ya habia creado se corrigen una vez, y de nuevo cuando acabe su setup()
+local function refix()
+  for name in pairs(vim.api.nvim_get_hl(0, {})) do
+    if name:match("^lualine_") then
+      local c = vim.api.nvim_get_hl(0, { name = name, link = false })
+      local f, b = _G.matrix_ll.fix(name, c.fg and string.format("#%06x", c.fg), c.bg and string.format("#%06x", c.bg))
+      apply({ [name] = { fg = f, bg = b } })
+    end
+  end
+  pcall(vim.cmd, "redrawstatus!")
+end
+refix()
+vim.defer_fn(refix, 150)
+"##;
 
 fn write_nvim_lua(accent: Option<Accent>) -> Result<(), String> {
     let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
