@@ -82,7 +82,7 @@ Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `
 `rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
 `--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; scope: grosor de la línea; por defecto según la pantalla), `--hud`,
-`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako` y `--gtklock` (ver abajo).
+`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako`, `--gtklock` y `--zellij` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
 escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel`, `--no-kitty`, `--no-firedragon` y `--no-hud` apagan una bandera, y
@@ -164,6 +164,19 @@ antes el fichero vacío (`touch ~/.config/kitty/matrix-colors.conf`):
 
 ```
 include matrix-colors.conf
+```
+
+## Color de zellij (`--zellij`, opcional)
+
+zellij no tiene `include`, así que `--zellij` escribe un tema completo en `~/.config/zellij/themes/matrix.kdl`
+(fondo negro; texto, cinta, marcos y códigos de salida en el color elegido) y toca `config.kdl` para que zellij
+recargue. En tu `config.kdl` pon `theme "matrix"`. Para que al apagar vuelva tu tema, copia el tuyo a
+`~/.config/zellij/themes/matrix-off.kdl` y cambia el nombre interno del tema a `matrix-off`; al desactivar,
+matrix-wayland copia ese fichero como `matrix.kdl` (con el nombre `matrix`). Si `matrix-off.kdl` no existe,
+apagar da error en vez de dejar un tema roto.
+
+```
+theme "matrix"
 ```
 
 ## Color de FireDragon (`--firedragon`, opcional)

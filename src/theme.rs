@@ -18,7 +18,7 @@ pub struct Target {
     reload: fn(),
 }
 
-pub const TARGETS: [Target; 7] = [
+pub const TARGETS: [Target; 8] = [
     Target { name: "waybar", flag: "--waybar", write: write_waybar_css, reload: reload_waybar },
     Target { name: "fuzzel", flag: "--fuzzel", write: write_fuzzel_ini, reload: || {} }, // se lee al abrirlo
     Target { name: "kitty", flag: "--kitty", write: write_kitty_conf, reload: reload_kitty },
@@ -26,6 +26,7 @@ pub const TARGETS: [Target; 7] = [
     Target { name: "sway", flag: "--sway", write: write_sway_conf, reload: reload_sway },
     Target { name: "gtklock", flag: "--gtklock", write: write_gtklock_css, reload: || {} }, // se lee al bloquear
     Target { name: "mako", flag: "--mako", write: write_mako_conf, reload: reload_mako },
+    Target { name: "zellij", flag: "--zellij", write: write_zellij_theme, reload: reload_zellij },
 ];
 
 impl Target {
@@ -296,6 +297,59 @@ fn write_mako_conf(accent: Option<Accent>) -> Result<(), String> {
     atomic_write(&path, &body)
 }
 
+// ---------- zellij (--zellij) ----------
+// zellij no tiene `include`: escribe el tema `matrix` en `themes/matrix.kdl` y el config.kdl del
+// usuario debe tener `theme "matrix"`. Inactivo, el tema `matrix` es una copia de
+// `themes/matrix-off.kdl` (el tema propio del usuario, cuyo nombre interno es `matrix-off`).
+fn rgb(h: &str) -> String {
+    let c = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0);
+    format!("{} {} {}", c(0), c(2), c(4))
+}
+
+fn zellij_theme_body(accent: Option<Accent>, dir: &Path) -> Result<String, String> {
+    let Some(a) = accent else {
+        let off = dir.join("matrix-off.kdl");
+        let src = std::fs::read_to_string(&off).map_err(|e| format!("{}: {e} (copia tu tema a matrix-off.kdl)", off.display()))?;
+        return Ok(src.replace("matrix-off", "matrix"));
+    };
+    let s = scheme(a);
+    let (fg, hi, url, dim, mid) = (rgb(&s.fg), rgb(&s.hi), rgb(&s.url), rgb(&s.dim), rgb(&s.mid));
+    let k = "0 0 0".to_string();
+    let red = "255 0 0".to_string();
+    let orange = "255 158 59".to_string();
+    // (seccion, base, fondo, emphasis_0..3)
+    let sections: [(&str, &String, &String, [&String; 4]); 8] = [
+        ("text_unselected", &fg, &k, [&url, &hi, &fg, &mid]),
+        ("text_selected", &k, &hi, [&url, &k, &fg, &mid]),
+        ("ribbon_unselected", &fg, &dim, [&url, &hi, &fg, &mid]),
+        ("ribbon_selected", &k, &hi, [&url, &fg, &mid, &dim]),
+        ("frame_selected", &hi, &k, [&url, &fg, &mid, &dim]),
+        ("frame_unselected", &dim, &k, [&mid, &dim, &dim, &dim]),
+        ("exit_code_success", &fg, &k, [&url, &k, &hi, &mid]),
+        ("exit_code_error", &red, &k, [&orange, &k, &k, &k]),
+    ];
+    let mut out = String::from("// generado por matrix-wayland\nthemes {\n    matrix {\n");
+    for (name, base, bg, e) in sections {
+        out.push_str(&format!("        {name} {{\n            base {base}\n            background {bg}\n"));
+        for (i, c) in e.iter().enumerate() { out.push_str(&format!("            emphasis_{i} {c}\n")); }
+        out.push_str("        }\n");
+    }
+    out.push_str("    }\n}\n");
+    Ok(out)
+}
+
+fn write_zellij_theme(accent: Option<Accent>) -> Result<(), String> {
+    let dir = config_dir().ok_or("no se pudo resolver ~/.config")?.join("zellij").join("themes");
+    let body = zellij_theme_body(accent, &dir)?;
+    atomic_write(&dir.join("matrix.kdl"), &body)
+}
+
+/// zellij vigila su config.kdl y recarga (tema incluido) cuando cambia; basta con tocarlo.
+fn reload_zellij() {
+    let Some(cfg) = config_dir().map(|d| d.join("zellij").join("config.kdl")) else { return };
+    if let Ok(f) = std::fs::OpenOptions::new().append(true).open(&cfg) { let _ = f.set_modified(std::time::SystemTime::now()); }
+}
+
 // ---------- gtklock (--gtklock) ----------
 // El style.css de gtklock define colores por defecto con `@define-color matrix_*` y despues hace
 // `@import url("matrix-colors.css");` (el import sobrescribe los defaults); ver el README.
@@ -314,4 +368,29 @@ fn write_gtklock_css(accent: Option<Accent>) -> Result<(), String> {
         None => "/* generado por matrix-wayland: inactivo, se usan los colores por defecto de style.css */\n".to_string(),
     };
     atomic_write(&path, &body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zellij_active_theme_has_name_and_green_accent() {
+        let body = zellij_theme_body(Some(Accent::One([0, 255, 65])), Path::new("/nonexistent")).unwrap();
+        assert!(body.contains("themes {") && body.contains("    matrix {"));
+        assert!(body.contains("base 0 255 65"));
+        assert_eq!(body.matches('{').count(), body.matches('}').count());
+        if let Ok(p) = std::env::var("MATRIX_ZELLIJ_DUMP") { std::fs::write(p, &body).unwrap(); }
+    }
+
+    #[test]
+    fn zellij_off_copies_user_theme_renamed() {
+        let dir = std::env::temp_dir().join(format!("mw-zellij-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("matrix-off.kdl"), "themes {\n    matrix-off { }\n}\n").unwrap();
+        let body = zellij_theme_body(None, &dir).unwrap();
+        assert!(body.contains("    matrix {") && !body.contains("matrix-off"));
+        assert!(zellij_theme_body(None, Path::new("/nonexistent")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

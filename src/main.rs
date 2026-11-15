@@ -572,8 +572,8 @@ fn usage() -> ! {
   --bar-width PX    (equalizer, spectrum) ancho de cada barra en pixeles (0 o sin indicar: el doble del alto del LED)
   --simulate        (equalizer, spectrum, scope) audio simulado en vez de captar el audio real
   --hud             (galaga, pacman, snake, tron) puntuacion, nivel/ronda y vidas
-  --waybar --fuzzel --kitty --firedragon --sway --mako --gtklock   el color tambien en esos programas (firedragon: reiniciarlo para verlo)
-  --no-waybar --no-fuzzel --no-kitty --no-firedragon --no-sway --no-mako --no-gtklock --no-hud --no-simulate   apagan una bandera
+  --waybar --fuzzel --kitty --firedragon --sway --mako --gtklock --zellij   el color tambien en esos programas (firedragon: reiniciarlo para verlo)
+  --no-waybar --no-fuzzel --no-kitty --no-firedragon --no-sway --no-mako --no-gtklock --no-zellij --no-hud --no-simulate   apagan una bandera
   --reset           olvida las opciones recordadas
 Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: primer plano.
   stop --keep-theme  apaga la escena y deja los colores de los programas
