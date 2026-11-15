@@ -384,6 +384,10 @@ fn nvim_lua_body(accent: Option<Accent>) -> String {
          \x20 GitSignsAdd = {{ fg = hi }}, GitSignsChange = {{ fg = url }}, GitSignsDelete = {{ fg = mid }},\n\
          \x20 TelescopeSelection = {{ fg = hi, bg = faint }}, TelescopeBorder = {{ fg = hi }}, TelescopeMatching = {{ fg = url, bold = true }},\n\
          \x20 NeoTreeDirectoryName = {{ fg = hi }}, NeoTreeDirectoryIcon = {{ fg = hi }}, NeoTreeFileName = {{ fg = fg }}, NeoTreeRootName = {{ fg = hi, bold = true }},\n\
+         \x20 SnacksDashboardHeader = {{ fg = hi, bold = true }}, SnacksDashboardIcon = {{ fg = hi }}, SnacksDashboardKey = {{ fg = url }},\n\
+         \x20 SnacksDashboardDesc = {{ fg = fg }}, SnacksDashboardFooter = {{ fg = mid }}, SnacksDashboardSpecial = {{ fg = url }},\n\
+         \x20 SnacksDashboardDir = {{ fg = mid }}, SnacksDashboardFile = {{ fg = fg }}, SnacksDashboardTitle = {{ fg = hi, bold = true }},\n\
+         \x20 SnacksDashboardNormal = {{ fg = fg }}, SnacksDashboardTerminal = {{ fg = fg }},\n\
          \x20 WhichKey = {{ fg = url }}, WhichKeyGroup = {{ fg = hi }}, WhichKeyDesc = {{ fg = fg }}, WhichKeySeparator = {{ fg = mid }},\n\
          }}\n\
          local function apply(t)\n\
