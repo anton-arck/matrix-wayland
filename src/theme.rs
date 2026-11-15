@@ -386,19 +386,25 @@ fn nvim_lua_body(accent: Option<Accent>) -> String {
          \x20 NeoTreeDirectoryName = {{ fg = hi }}, NeoTreeDirectoryIcon = {{ fg = hi }}, NeoTreeFileName = {{ fg = fg }}, NeoTreeRootName = {{ fg = hi, bold = true }},\n\
          \x20 WhichKey = {{ fg = url }}, WhichKeyGroup = {{ fg = hi }}, WhichKeyDesc = {{ fg = fg }}, WhichKeySeparator = {{ fg = mid }},\n\
          }}\n\
-         -- lualine: letra a (modo) con fondo de color, b/c/x/y/z discretos\n\
+         local function apply(t)\n\
+         \x20 for name, o in pairs(t) do\n\
+         \x20   local c = vim.api.nvim_get_hl(0, {{ name = name, link = false }})\n\
+         \x20   vim.api.nvim_set_hl(0, name, vim.tbl_extend(\"force\", c, o))\n\
+         \x20 end\n\
+         end\n\
+         apply(map)\n\
+         -- lualine redefine sus grupos despues de ColorScheme: se reaplican con un pequeno retardo\n\
+         local ll = {{}}\n\
          local modes = {{ normal = hi, insert = url, visual = mid, replace = url, command = mid, terminal = hi }}\n\
          for m, bg in pairs(modes) do\n\
-         \x20 map[\"lualine_a_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
-         \x20 for _, l in ipairs({{ \"b\", \"y\" }}) do map[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = hi, bg = dim }} end\n\
-         \x20 for _, l in ipairs({{ \"c\", \"x\" }}) do map[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = fg }} end\n\
-         \x20 map[\"lualine_z_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
+         \x20 ll[\"lualine_a_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
+         \x20 for _, l in ipairs({{ \"b\", \"y\" }}) do ll[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = hi, bg = dim }} end\n\
+         \x20 for _, l in ipairs({{ \"c\", \"x\" }}) do ll[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = fg }} end\n\
+         \x20 ll[\"lualine_z_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
          end\n\
-         map.lualine_a_inactive = {{ fg = mid }}; map.lualine_b_inactive = {{ fg = mid }}; map.lualine_c_inactive = {{ fg = mid }}\n\
-         for name, o in pairs(map) do\n\
-         \x20 local c = vim.api.nvim_get_hl(0, {{ name = name, link = false }})\n\
-         \x20 vim.api.nvim_set_hl(0, name, vim.tbl_extend(\"force\", c, o))\n\
-         end\n",
+         ll.lualine_a_inactive = {{ fg = mid }}; ll.lualine_b_inactive = {{ fg = mid }}; ll.lualine_c_inactive = {{ fg = mid }}\n\
+         apply(ll)\n\
+         vim.defer_fn(function() apply(ll); pcall(vim.cmd, \"redrawstatus!\") end, 120)\n",
         fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid, faint = s.faint)
 }
 
