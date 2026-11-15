@@ -82,10 +82,10 @@ Opciones: `-c` color (`green cyan magenta pink blue purple orange yellow red`, `
 `rainbow`), `--scene matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope`, `--fps N` (matrix 15, el resto 30), `-s` caracteres
 (`mixed katakana binary digits hex`, solo matrix), `--size PX` y `--font RUTA` (solo matrix),
 `--scale N` (galaga: píxeles por píxel de sprite; pacman, snake y tron: píxeles por casilla; equalizer y spectrum: tamaño del LED; scope: grosor de la línea; por defecto según la pantalla), `--hud`,
-`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar` y `--fuzzel` (ver abajo).
+`--bar-width PX` y `--simulate` (equalizer, spectrum y scope), `--waybar`, `--fuzzel`, `--kitty`, `--firedragon`, `--sway`, `--mako` y `--gtklock` (ver abajo).
 
 **Las opciones se recuerdan entre arranques** (`~/.local/state/matrix-wayland/options`): lo que
-escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel` y `--no-hud` apagan una bandera, y
+escribas gana sobre lo recordado. `--no-waybar`, `--no-fuzzel`, `--no-kitty`, `--no-firedragon` y `--no-hud` apagan una bandera, y
 `--reset` olvida todo y vuelve a los valores por defecto.
 
 ### Solo los colores, sin escena
@@ -99,7 +99,7 @@ matrix-wayland theme -c cyan          # cambia el color sin ninguna escena
 matrix-wayland theme --off            # restaura los colores originales
 ```
 
-`theme` usa las banderas recordadas (`--waybar`/`--fuzzel`); si hay una escena en marcha, se niega
+`theme` usa las banderas recordadas (`--waybar`, `--fuzzel`, `--kitty`, `--firedragon`); si hay una escena en marcha, se niega
 (usa `restart -c COLOR`). Para que el color aparezca al iniciar sesión sin lanzar la escena, pon
 `exec matrix-wayland theme` en tu configuración de sway.
 
@@ -154,6 +154,43 @@ include=~/.config/fuzzel/matrix-colors.ini
 ```
 
 Se pueden combinar: `matrix-wayland start -c yellow --waybar --fuzzel`.
+
+## Color de kitty (`--kitty`, opcional)
+
+Con `--kitty` escribe `~/.config/kitty/matrix-colors.conf` (fondo negro; texto, cursor, selección, enlaces y
+pestañas en el color elegido; la paleta ANSI no se toca) y manda `SIGUSR1` a kitty para que recargue en
+caliente. Añade esta línea **al final** de `kitty.conf`, después de tus colores (gana el último), y crea
+antes el fichero vacío (`touch ~/.config/kitty/matrix-colors.conf`):
+
+```
+include matrix-colors.conf
+```
+
+## Color de FireDragon (`--firedragon`, opcional)
+
+Escribe `chrome/matrix-colors.css` (interfaz) y `chrome/matrix-content-colors.css` (`about:*` y nueva
+pestaña) en el perfil `*.default-release` de `~/.firedragon`. Impórtalos al principio de tus
+`userChrome.css` y `userContent.css`, justo después de `@charset`:
+
+```css
+@import "matrix-colors.css";            /* userChrome.css */
+@import "matrix-content-colors.css";    /* userContent.css */
+```
+
+El navegador solo lee el CSS al arrancar: **hay que reiniciarlo** para ver el color nuevo.
+
+## Color de sway, mako y gtklock (`--sway`, `--mako`, `--gtklock`, opcionales)
+
+- **sway**: escribe `~/.config/sway/matrix-colors` (`client.*`: el color de los bordes de ventana) y lo aplica
+  en caliente con `swaymsg`, sin recargar (un `reload` reinicia el `swaybar_command` y puede perder waybar).
+  Añade al **final** de tu config `include $HOME/.config/sway/matrix-colors`. Al apagar el tema sí recarga, y
+  si waybar no sobrevive, lo relanza.
+- **mako**: escribe `~/.config/mako/matrix-colors` y ejecuta `makoctl reload`. Añade al final de tu config
+  `include=/ruta/absoluta/.config/mako/matrix-colors` (mako exige ruta absoluta).
+- **gtklock**: escribe `~/.config/gtklock/matrix-colors.css` (se lee al bloquear). Tu `style.css` define
+  colores por defecto con `@define-color matrix_fg ...`, `matrix_hi`, `matrix_lock_bg`, `matrix_field_bg`,
+  `matrix_field_border`, `matrix_field_text` y `matrix_hover`, hace `@import url("matrix-colors.css");` y
+  usa esos colores (`@matrix_fg`...); con el tema activo el fondo se vuelve negro.
 
 ## Compilar e instalar
 

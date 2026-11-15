@@ -4,6 +4,7 @@ mod galaga;
 mod pacman;
 mod scope;
 mod snake;
+mod theme;
 mod tron;
 
 use std::collections::HashMap;
@@ -50,11 +51,11 @@ const NEON: [(&str, [u8; 3]); 9] = [
 ];
 const BANDS: [f64; 4] = [1.0, 0.65, 0.38, 0.18];
 const BG: u32 = 0xFF00_0000;
-/// Orden de los neones en waybar/fuzzel con rainbow: vecinos siempre de tono muy distinto.
+/// Orden de los neones en los temas con rainbow: vecinos siempre de tono muy distinto.
 /// Indices en NEON: cyan, magenta, yellow, green, orange, blue, pink, purple, red.
 const RAINBOW_ORDER: [usize; 9] = [1, 2, 7, 0, 6, 4, 3, 5, 8];
 
-/// Color del tema de waybar/fuzzel: uno solo o rainbow (colores alternados).
+/// Color del tema de waybar/fuzzel/kitty/FireDragon: uno solo o rainbow (colores alternados).
 #[derive(Clone, Copy)]
 enum Accent { One([u8; 3]), Rainbow }
 fn accent_of(color: &str) -> Option<Accent> {
@@ -64,6 +65,11 @@ fn accent_of(color: &str) -> Option<Accent> {
 // ---------- utilidades ----------
 struct Rng(u64);
 impl Rng {
+    /// Generador sembrado con la hora actual (nunca con estado cero).
+    fn from_time() -> Self {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0x9e37_79b9, |d| d.as_nanos() as u64);
+        Rng(nanos | 1)
+    }
     fn next(&mut self) -> u64 { self.0 ^= self.0 << 13; self.0 ^= self.0 >> 7; self.0 ^= self.0 << 17; self.0 }
     fn f(&mut self) -> f64 { (self.next() >> 11) as f64 / (1u64 << 53) as f64 }
     fn rf(&mut self, lo: f32, hi: f32) -> f32 { lo + (hi - lo) * self.f() as f32 }
@@ -208,8 +214,7 @@ struct Matrix {
 
 impl Matrix {
     fn new(pals: Vec<Pal>, chars: Vec<char>) -> Self {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
-        Matrix { cols: 0, rows: 0, grid: vec![], head: vec![], length: vec![], speed: vec![], pals, chars, rng: Rng(seed | 1) }
+        Matrix { cols: 0, rows: 0, grid: vec![], head: vec![], length: vec![], speed: vec![], pals, chars, rng: Rng::from_time() }
     }
     fn new_len(&mut self) -> i32 { self.rng.range((self.rows as i32 / 4).max(4), (self.rows as i32).max(6)) }
     fn reset(&mut self, cols: usize, rows: usize) {
@@ -405,7 +410,8 @@ fn running_pid() -> Option<i32> {
     if comm.trim() == "matrix-wayland" { Some(pid) } else { None }
 }
 
-/// keep_theme = true (restart): el proceso sale sin restaurar los colores, para que el\n/// siguiente arranque los aplique sin una recarga doble de waybar entre medias.
+/// keep_theme = true (restart): el proceso sale sin restaurar los colores, para que el
+/// siguiente arranque los aplique sin una recarga doble de waybar entre medias.
 fn cmd_stop(keep_theme: bool) -> bool {
     match running_pid() {
         None => { eprintln!("matrix-wayland no esta en marcha"); false }
@@ -426,7 +432,9 @@ fn cmd_stop(keep_theme: bool) -> bool {
 // escribas gana sobre lo recordado; --no-X apaga una bandera y --reset olvida todo.
 // Se guardan en $XDG_STATE_HOME/matrix-wayland/options.
 const VALUE_OPTS: [&str; 8] = ["-c", "-s", "--fps", "--size", "--font", "--scene", "--scale", "--bar-width"];
-const FLAG_OPTS: [&str; 4] = ["--waybar", "--fuzzel", "--hud", "--simulate"];
+const FLAG_OPTS: [&str; 2] = ["--hud", "--simulate"];
+/// Banderas booleanas: las propias mas las de cada destino de tema (`--waybar`, `--kitty`...).
+fn is_flag_opt(a: &str) -> bool { FLAG_OPTS.contains(&a) || theme::by_flag(a).is_some() }
 
 fn state_file() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
@@ -444,7 +452,7 @@ fn load_options() -> std::collections::BTreeMap<String, String> {
     t.lines().filter(|l| !l.trim().is_empty()).map(|l| {
         let (k, v) = l.split_once('\t').unwrap_or((l, ""));
         (k.to_string(), v.to_string())
-    }).filter(|(k, _)| VALUE_OPTS.contains(&k.as_str()) || FLAG_OPTS.contains(&k.as_str())).collect()
+    }).filter(|(k, _)| VALUE_OPTS.contains(&k.as_str()) || is_flag_opt(k)).collect()
 }
 
 fn save_options(o: &std::collections::BTreeMap<String, String>) {
@@ -458,7 +466,7 @@ fn save_options(o: &std::collections::BTreeMap<String, String>) {
 /// que recibe el proceso.
 fn resolve_options(opts: &[String]) -> Vec<String> {
     let mut o = load_options();
-    let (old_waybar, old_fuzzel) = (o.contains_key("--waybar"), o.contains_key("--fuzzel"));
+    let old_targets: Vec<&theme::Target> = theme::TARGETS.iter().filter(|t| o.contains_key(t.flag)).collect();
     let mut rest = Vec::new();
     let mut it = opts.iter();
     while let Some(a) = it.next() {
@@ -466,51 +474,47 @@ fn resolve_options(opts: &[String]) -> Vec<String> {
         else if VALUE_OPTS.contains(&a.as_str()) {
             match it.next() { Some(v) => { o.insert(a.clone(), v.clone()); } None => rest.push(a.clone()) }
         }
-        else if FLAG_OPTS.contains(&a.as_str()) { o.insert(a.clone(), String::new()); }
-        else if let Some(f) = a.strip_prefix("--no-").map(|f| format!("--{f}")).filter(|f| FLAG_OPTS.contains(&f.as_str())) { o.remove(&f); }
+        else if is_flag_opt(a) { o.insert(a.clone(), String::new()); }
+        else if let Some(f) = a.strip_prefix("--no-").map(|f| format!("--{f}")).filter(|f| is_flag_opt(f)) { o.remove(&f); }
         else { rest.push(a.clone()); } // desconocida: que la rechace el proceso con el uso
     }
     save_options(&o);
     // si se apaga una integracion, el proceso anterior (restart) pudo dejar su color: restaurar
-    if old_waybar && !o.contains_key("--waybar") { waybar_apply(None); }
-    if old_fuzzel && !o.contains_key("--fuzzel") { fuzzel_apply(None); }
+    for t in old_targets { if !o.contains_key(t.flag) { t.apply(None); } }
     for (k, v) in &o { rest.push(k.clone()); if !v.is_empty() { rest.push(v.clone()); } }
     rest
 }
 
-/// Aplica (o quita) el color de waybar/fuzzel sin ninguna escena en marcha.
+/// Aplica (o quita) el color de los programas elegidos sin ninguna escena en marcha.
 fn cmd_theme(opts: &[String]) {
     if let Some(pid) = running_pid() {
         eprintln!("hay una escena en marcha (pid {pid}); usa `matrix-wayland restart -c COLOR` para cambiar el color");
         std::process::exit(1);
     }
     if opts.iter().any(|o| o == "--off") {
-        waybar_apply(None);
-        fuzzel_apply(None);
-        println!("colores de waybar y fuzzel restaurados");
+        for t in &theme::TARGETS { t.apply(None); }
+        println!("colores originales restaurados");
         return;
     }
     let resolved = resolve_options(opts);
-    let (mut color, mut wb, mut fz) = ("green".to_string(), false, false);
+    let mut color = "green".to_string();
     let mut it = resolved.iter();
     while let Some(o) = it.next() {
-        match o.as_str() {
-            "-c" => if let Some(v) = it.next() { color = v.clone(); },
-            "--waybar" => wb = true,
-            "--fuzzel" => fz = true,
-            _ => {}
-        }
+        if o == "-c" { if let Some(v) = it.next() { color = v.clone(); } }
     }
-    if !wb && !fz { eprintln!("nada que aplicar: usa --waybar y/o --fuzzel (se recuerdan para la proxima vez)"); std::process::exit(1); }
-    let rgb = accent_of(&color);
-    if rgb.is_none() {
+    let targets: Vec<&theme::Target> = theme::TARGETS.iter().filter(|t| resolved.iter().any(|o| o == t.flag)).collect();
+    if targets.is_empty() { eprintln!("nada que aplicar: usa {} (se recuerdan para la proxima vez)", flag_list()); std::process::exit(1); }
+    let accent = accent_of(&color);
+    if accent.is_none() {
         eprintln!("el color {color:?} no sirve para el tema (use un nombre neon, #rrggbb o rainbow)");
         std::process::exit(2);
     }
-    if wb { waybar_apply(rgb); }
-    if fz { fuzzel_apply(rgb); }
-    println!("tema {color} aplicado{}{}", if wb { " a waybar" } else { "" }, if fz { " y fuzzel" } else { "" });
+    for t in &targets { t.apply(accent); }
+    println!("tema {color} aplicado a {}", targets.iter().map(|t| t.name).collect::<Vec<_>>().join(", "));
 }
+
+/// `--waybar, --fuzzel, ...` para los mensajes.
+fn flag_list() -> String { theme::TARGETS.iter().map(|t| t.flag).collect::<Vec<_>>().join(", ") }
 
 fn cmd_start(opts: &[String]) {
     if let Some(pid) = running_pid() { eprintln!("ya esta en marcha (pid {pid}); usa `matrix-wayland restart`"); std::process::exit(1); }
@@ -538,11 +542,7 @@ fn cmd_start(opts: &[String]) {
     println!("iniciado (pid {})", child.id());
 }
 
-// ---------- integracion con waybar (opt-in: --waybar) ----------
-fn waybar_css_path() -> Option<PathBuf> {
-    Some(config_dir()?.join("waybar").join("matrix-colors.css"))
-}
-
+// ---------- utilidades de ficheros ----------
 fn config_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
@@ -560,90 +560,6 @@ fn atomic_write(path: &std::path::Path, body: &str) -> Result<(), String> {
 
 fn hex(c: [u8; 3]) -> String { format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2]) }
 
-/// Escribe el CSS de GTK con los colores (None = solo un comentario, para que el
-/// style.css use sus colores por defecto).
-fn write_waybar_css(accent: Option<Accent>) -> Result<(), String> {
-    let path = waybar_css_path().ok_or("no se pudo resolver ~/.config/waybar")?;
-    let body = match accent {
-        Some(Accent::One(c)) => format!(
-            "/* generado por matrix-wayland */\n\
-             @define-color matrix_accent #{h};\n\
-             @define-color matrix_fg #{h};\n\
-             @define-color matrix_bar_bg #000000;\n\
-             @define-color matrix_mod_bg #000000;\n\
-             @define-color matrix_mod_hover rgba({r},{g},{b},0.25);\n",
-            h = hex(c), r = c[0], g = c[1], b = c[2]),
-        Some(Accent::Rainbow) => {
-            // cada modulo (y cada boton de workspace) con un neon distinto, alternados
-            let mut css = String::from("/* generado por matrix-wayland: rainbow */\n\
-                @define-color matrix_accent #ffffff;\n@define-color matrix_fg #ffffff;\n\
-                @define-color matrix_bar_bg #000000;\n@define-color matrix_mod_bg #000000;\n\
-                @define-color matrix_mod_hover rgba(255,255,255,0.18);\n");
-            let mut k = 0;
-            let mut next = || { let c = hex(NEON[RAINBOW_ORDER[k % RAINBOW_ORDER.len()]].1); k += 1; c };
-            for sel in ["#custom-launcher"] { css += &format!("{sel} {{ color: #{}; }}\n", next()); }
-            for n in 1..=10 { css += &format!("#workspaces button:nth-child({n}) {{ color: #{}; }}\n", next()); }
-            for sel in ["#window", "#network", "#privacy", "#custom-updates", "#custom-keyboard-layout", "#cpu", "#temperature",
-                        "#memory", "#wireplumber", "#battery", "#custom-settings", "#clock", "#custom-power"] {
-                css += &format!("{sel} {{ color: #{}; }}\n", next());
-            }
-            css
-        }
-        None => "/* generado por matrix-wayland: inactivo, se usa el color por defecto del style.css */\n".to_string(),
-    };
-    atomic_write(&path, &body)
-}
-
-/// Tema de fuzzel (se lee al abrirlo: no hace falta recargar nada).
-fn write_fuzzel_ini(accent: Option<Accent>) -> Result<(), String> {
-    let path = config_dir().ok_or("no se pudo resolver ~/.config")?.join("fuzzel").join("matrix-colors.ini");
-    let body = match accent {
-        Some(Accent::One(c)) => {
-            let mix = |f: f64| hex([(c[0] as f64 * f) as u8, (c[1] as f64 * f) as u8, (c[2] as f64 * f) as u8]);
-            let lite = hex([(c[0] as f64 + (255.0 - c[0] as f64) * 0.75) as u8, (c[1] as f64 + (255.0 - c[1] as f64) * 0.75) as u8, (c[2] as f64 + (255.0 - c[2] as f64) * 0.75) as u8]);
-            let a = hex(c);
-            format!(
-                "# generado por matrix-wayland\n[colors]\nbackground=000000ff\ntext={a}ff\nprompt={a}ff\ninput={a}ff\n\
-                 placeholder={p}ff\nmatch={lite}ff\nselection-match={lite}ff\nselection={a}40\nselection-text={a}ff\n\
-                 counter={p}ff\nborder={a}ff\n",
-                p = mix(0.55))
-        }
-        Some(Accent::Rainbow) => {
-            // un neon distinto por elemento (fuzzel pinta todas las filas con el mismo color de texto)
-            let c = |i: usize| hex(NEON[RAINBOW_ORDER[i % RAINBOW_ORDER.len()]].1);
-            format!(
-                "# generado por matrix-wayland: rainbow\n[colors]\nbackground=000000ff\ntext={}ff\nprompt={}ff\ninput={}ff\n\
-                 placeholder={}ff\nmatch={}ff\nselection-match={}ff\nselection={}40\nselection-text={}ff\n\
-                 counter={}ff\nborder={}ff\n",
-                c(0), c(1), c(2), c(3), c(4), c(5), c(6), c(7), c(8), c(1))
-        }
-        None => "# generado por matrix-wayland: inactivo, se usan los colores por defecto\n".to_string(),
-    };
-    atomic_write(&path, &body)
-}
-
-fn fuzzel_apply(accent: Option<Accent>) {
-    if let Err(e) = write_fuzzel_ini(accent) { eprintln!("fuzzel: {e}"); }
-}
-
-/// SIGUSR2 hace que waybar recargue config y estilo. Solo a procesos nuestros.
-fn reload_waybar() {
-    let me = unsafe { geteuid() };
-    let Ok(rd) = std::fs::read_dir("/proc") else { return };
-    for e in rd.flatten() {
-        let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else { continue };
-        let owned = e.metadata().map(|m| m.uid() == me).unwrap_or(false);
-        let is_waybar = std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim() == "waybar").unwrap_or(false);
-        if owned && is_waybar { unsafe { kill(pid, 12) }; }
-    }
-}
-
-fn waybar_apply(accent: Option<Accent>) {
-    match write_waybar_css(accent) {
-        Ok(()) => reload_waybar(),
-        Err(e) => eprintln!("waybar: {e}"),
-    }
-}
 
 fn usage() -> ! {
     eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
@@ -656,12 +572,12 @@ fn usage() -> ! {
   --bar-width PX    (equalizer, spectrum) ancho de cada barra en pixeles (0 o sin indicar: el doble del alto del LED)
   --simulate        (equalizer, spectrum, scope) audio simulado en vez de captar el audio real
   --hud             (galaga, pacman, snake, tron) puntuacion, nivel/ronda y vidas
-  --waybar / --fuzzel      el color tambien en waybar / fuzzel
-  --no-waybar --no-fuzzel --no-hud --no-simulate   apagan una bandera
+  --waybar --fuzzel --kitty --firedragon --sway --mako --gtklock   el color tambien en esos programas (firedragon: reiniciarlo para verlo)
+  --no-waybar --no-fuzzel --no-kitty --no-firedragon --no-sway --no-mako --no-gtklock --no-hud --no-simulate   apagan una bandera
   --reset           olvida las opciones recordadas
 Las opciones se recuerdan entre arranques; lo que escribas gana. --foreground: primer plano.
-  stop --keep-theme  apaga la escena y deja los colores de waybar/fuzzel
-  theme [-c COLOR]   aplica el color a waybar/fuzzel sin escena (theme --off los restaura)");
+  stop --keep-theme  apaga la escena y deja los colores de los programas
+  theme [-c COLOR]   aplica el color a esos programas sin escena (theme --off los restaura)");
     std::process::exit(2)
 }
 
@@ -686,11 +602,10 @@ fn main() {
     }
     if a.first().map(String::as_str) == Some("--foreground") { foreground = true; a.remove(0); }
     if !foreground { cmd_start(&a); return; }
-    let (mut waybar, mut fuzzel) = (false, false);
+    let mut targets: Vec<&theme::Target> = Vec::new();
     let mut i = 0;
     while i < a.len() {
-        if a[i] == "--waybar" { waybar = true; i += 1; continue; }
-        if a[i] == "--fuzzel" { fuzzel = true; i += 1; continue; }
+        if let Some(t) = theme::by_flag(&a[i]) { targets.push(t); i += 1; continue; }
         if a[i] == "--hud" { hud = true; i += 1; continue; }
         if a[i] == "--simulate" { simulate = true; i += 1; continue; }
         let val = a.get(i + 1).cloned();
@@ -717,12 +632,7 @@ fn main() {
             None => { eprintln!("color invalido: {color:?}"); std::process::exit(2) }
         }
     };
-    if waybar {
-        waybar_apply(accent_of(&color));
-    }
-    if fuzzel {
-        fuzzel_apply(accent_of(&color));
-    }
+    for t in &targets { t.apply(accent_of(&color)); }
     let chars = charset(&set);
     let (painter, scene): (Painter, Box<dyn Scene>) = if scene_name == "galaga" {
         (Painter::plain(), Box::new(galaga::Galaga::new(pals, scale, hud)))
@@ -797,7 +707,6 @@ fn main() {
     }
     remove_own_pidfile();
     if !KEEP_THEME.load(Ordering::SeqCst) { // un restart deja los colores para el siguiente arranque
-        if waybar { waybar_apply(None); } // vuelve al color por defecto
-        if fuzzel { fuzzel_apply(None); }
+        for t in &targets { t.apply(None); } // vuelve al color por defecto
     }
 }

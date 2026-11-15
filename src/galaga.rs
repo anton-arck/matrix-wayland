@@ -118,9 +118,8 @@ fn bez(p0: (f32, f32), p1: (f32, f32), p2: (f32, f32), u: f32) -> (f32, f32) {
 
 impl Galaga {
     pub fn new(pals: Vec<Pal>, scale: i32, hud: bool) -> Self {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
         Galaga {
-            w: 1.0, h: 1.0, scale: scale.max(1), auto_scale: scale <= 0, hud, pals, rng: Rng(seed | 1),
+            w: 1.0, h: 1.0, scale: scale.max(1), auto_scale: scale <= 0, hud, pals, rng: Rng::from_time(),
             stars: vec![], enemies: vec![], pbul: vec![], ebul: vec![], parts: vec![],
             px: 0.0, alive: true, respawn: 0.0, invuln: 0.0, cooldown: 0.0, tx: 0.0, retarget: 0.0, threat_delay: None,
             phase: Phase::Playing, stage: 1, score: 0, lives: 3, t: 0.0, form_t: 0.0, dive_timer: 3.0,
@@ -230,7 +229,7 @@ impl Galaga {
                 for e in &self.enemies {
                     if !e.alive || matches!(e.state, ES::Enter { .. }) { continue; }
                     let score = (e.x - self.px).abs() + (4 - e.row).max(0) as f32 * 6.0;
-                    if best.map_or(true, |(s, _)| score < s) { best = Some((score, e.x)); }
+                    if best.is_none_or( |(s, _)| score < s) { best = Some((score, e.x)); }
                 }
                 self.tx = match best {
                     Some((_, x)) => x + self.rng.rf(-2.0, 2.0),
@@ -243,7 +242,7 @@ impl Galaga {
 
         // disparo: si hay un enemigo casi en la vertical
         self.cooldown -= dt;
-        if self.cooldown <= 0.0 && self.pbul.len() < 2 && (dodge.is_none() || self.threat_delay.map_or(true, |d| d > 0.0)) {
+        if self.cooldown <= 0.0 && self.pbul.len() < 2 && (dodge.is_none() || self.threat_delay.is_none_or( |d| d > 0.0)) {
             let aligned = self.enemies.iter().any(|e| e.alive && !matches!(e.state, ES::Enter { .. }) && e.y < py && (e.x - self.px).abs() < 3.5);
             if aligned {
                 self.pbul.push(Bul { x: self.px, y: py - 7.0, vy: -170.0 });

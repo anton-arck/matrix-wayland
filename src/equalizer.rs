@@ -36,7 +36,7 @@ pub(crate) fn spawn_capture() -> Option<Shared> {
                 let mut buf = [0u8; 2048];
                 while let Ok(n) = so.read(&mut buf) {
                     if n == 0 { break; }
-                    let new: Vec<f32> = buf[..n / 2 * 2].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+                    let new: Vec<f32> = buf[..n / 2 * 2].as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b) as f32 / 32768.0).collect();
                     let mut v = out.lock().unwrap();
                     v.extend(new);
                     let excess = v.len().saturating_sub(FFT_N);
@@ -98,7 +98,7 @@ impl Spectrum {
 
     fn bars(&mut self, samples: &[f32], dt: f32, out: &mut [f32]) {
         let n = out.len();
-        for i in 0..FFT_N { self.re[i] = samples[i] * self.win[i]; self.im[i] = 0.0; }
+        for (i, &s) in samples.iter().take(FFT_N).enumerate() { self.re[i] = s * self.win[i]; self.im[i] = 0.0; }
         fft(&mut self.re, &mut self.im);
         let bin_hz = RATE as f32 / FFT_N as f32;
         let mag = |b: f32| { // interpolacion lineal entre bins vecinos
@@ -108,7 +108,7 @@ impl Spectrum {
         };
         let mut db = vec![-120.0f32; n];
         let mut frame_max = -120.0f32;
-        for i in 0..n {
+        for (i, d) in db.iter_mut().enumerate() {
             let (lo, hi) = Self::edges(i, n);
             let (b_lo, b_hi) = (lo / bin_hz, hi / bin_hz);
             let mut m = mag((b_lo + b_hi) / 2.0);
@@ -117,17 +117,17 @@ impl Spectrum {
             let amp = 4.0 * m / FFT_N as f32; // 1.0 = seno a fondo de escala
             // +3 dB por octava: la musica cae hacia los agudos y asi las barras altas no quedan vacias
             let tilt = 3.0 * ((lo * hi).sqrt() / 1000.0).log2();
-            db[i] = 20.0 * amp.max(1e-7).log10() + tilt;
-            frame_max = frame_max.max(db[i]);
+            *d = 20.0 * amp.max(1e-7).log10() + tilt;
+            frame_max = frame_max.max(*d);
         }
         // referencia: sube al instante con el pico y baja lento; con suelo para no amplificar el ruido
         self.top = if frame_max > self.top { frame_max } else { (self.top - 4.0 * dt).max(frame_max) };
         // margen de 3 dB sobre el pico y rodilla suave por encima del 70 %: la barra mas fuerte se queda
         // en ~0.9 en vez de pegarse al techo (antes, con la referencia = pico, tocaba el 100 % en cada golpe)
         let top = self.top.max(-42.0) + 3.0;
-        for i in 0..n {
-            let x = (db[i] - (top - 50.0)) / 50.0;
-            out[i] = if x < 0.7 { x } else { 0.7 + 0.3 * ((x - 0.7) / 0.3).tanh() }.clamp(0.0, 1.0);
+        for (o, &d) in out.iter_mut().zip(&db) {
+            let x = (d - (top - 50.0)) / 50.0;
+            *o = if x < 0.7 { x } else { 0.7 + 0.3 * ((x - 0.7) / 0.3).tanh() }.clamp(0.0, 1.0);
         }
     }
 }
@@ -161,7 +161,6 @@ impl Equalizer {
     pub fn new(pals: Vec<Pal>, tile: i32, simulate: bool, mirror: bool, bar_w: i32) -> Self {
         let audio = if simulate { None } else { spawn_capture() };
         if !simulate && audio.is_none() { eprintln!("equalizer: no hay parec (pulseaudio-utils / pipewire-pulse); se simula la musica"); }
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
         // rainbow: verde -> amarillo -> rojo, como los VU clasicos (orden NEON: verde=0, amarillo=7, rojo=8)
         let on = if pals.len() >= 9 {
             [pals[0].bands[0], pals[7].bands[0], pals[8].bands[0]]
@@ -170,7 +169,7 @@ impl Equalizer {
             [p.bands[0], p.bands[0], p.head]
         };
         Equalizer {
-            rng: Rng(seed | 1), t_arg: tile, bar_w, audio, mirror, spec: Spectrum::new(), tgt: vec![], on, off: scale(pals[0].bands[0], 0.07),
+            rng: Rng::from_time(), t_arg: tile, bar_w, audio, mirror, spec: Spectrum::new(), tgt: vec![], on, off: scale(pals[0].bands[0], 0.07),
             peak_col: pals[0].head,
             wpx: 0, hpx: 0, led: 24, ledh: 8, gap: 2, cols: 0, rows: 0, ox: 0, oy: 0,
             lvl: vec![], peak: vec![], hold: vec![], vel: vec![], noise: vec![],
@@ -299,7 +298,7 @@ impl Scene for Equalizer {
         let margin = if self.mirror { 0 } else { (w as i32 / 24).max(px) };
         self.cols = (((w as i32 - 2 * margin + self.gap) / px).max(4)) as usize;
         let span = if self.mirror { (h as i32 / 2 - self.gap / 2).max(1) } else { h as i32 * 88 / 100 };
-        self.rows = (((span + self.gap) / py).max(4)).min(80);
+        self.rows = ((span + self.gap) / py).clamp(4, 80);
         self.ox = (w as i32 - self.cols as i32 * px + self.gap) / 2;
         self.oy = if self.mirror { h as i32 / 2 - self.gap / 2 } // linea central
             else { h as i32 - (h as i32 - self.rows * py) / 2 + self.gap }; // bloque centrado

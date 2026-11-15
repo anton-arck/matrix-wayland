@@ -23,7 +23,6 @@ pub struct Tron {
 
 impl Tron {
     pub fn new(pals: Vec<Pal>, tile: i32, hud: bool) -> Self {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
         let cols: Vec<(u32, u32)> = if pals.len() >= 9 {
             // cian, naranja, magenta, amarillo (orden NEON: green cyan magenta pink blue purple orange yellow red)
             [1, 6, 2, 7].iter().map(|&i| (pals[i].bands[0], pals[i].head)).collect()
@@ -32,7 +31,7 @@ impl Tron {
             vec![(p.bands[0], p.head), (p.head, p.bands[0]), (p.bands[1], p.head)]
         };
         Tron {
-            hud, t_arg: tile, rng: Rng(seed | 1), cols, t: 12, ox: 0, oy: 0, gw: 0, gh: 0, wpx: 0, hpx: 0,
+            hud, t_arg: tile, rng: Rng::from_time(), cols, t: 12, ox: 0, oy: 0, gw: 0, gh: 0, wpx: 0, hpx: 0,
             grid: vec![], bikes: vec![], acc: 0.0, pause: 0.0, round: 1, stamp: vec![], stamp_id: 0, t_all: 0.0,
         }
     }

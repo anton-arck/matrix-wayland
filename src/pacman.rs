@@ -152,7 +152,6 @@ pub struct Pacman {
 
 impl Pacman {
     pub fn new(pals: Vec<Pal>, tile: i32, hud: bool) -> Self {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
         let colors = if pals.len() >= 9 {
             // rainbow: colores clasicos (orden NEON: green cyan magenta pink blue purple orange yellow red)
             Colors {
@@ -168,7 +167,7 @@ impl Pacman {
             }
         };
         Pacman {
-            hud, tile_arg: tile, colors, rng: Rng(seed | 1),
+            hud, tile_arg: tile, colors, rng: Rng::from_time(),
             wpx: 0, hpx: 0, t: 24, ox: 0, oy: 0, tw: 0, th: 0,
             wall: vec![], pellet: vec![], pellets_left: 0, wall_rects: vec![], layer: vec![], layer_color: 0,
             home: (1, 1), pac_start: (1, 1),
@@ -186,7 +185,7 @@ impl Pacman {
         let avail_h = self.hpx - top - bottom;
         let mut ch = ((avail_h / t - 1) / 2).max(2) as usize;
         let mut cw = (((self.wpx / t - 2) - 1) / 2).max(3) as usize;
-        if cw % 2 == 0 { cw -= 1; }
+        if cw.is_multiple_of(2) { cw -= 1; }
         ch = ch.min(40); cw = cw.min(61);
         let (tw, th, open) = gen_maze(&mut self.rng, cw, ch);
         self.tw = tw as i32;
@@ -307,7 +306,7 @@ impl Pacman {
             if near_danger && self.power_t <= 0.0 && d_power[i] < 12 { cost -= (12 - d_power[i]) as f32 * 4.0; }
             if (dx, dy) == (-dir.0, -dir.1) && dir != (0, 0) { cost += 6.0; } // evita titubeos
             cost += self.rng.rf(0.0, 0.5);
-            if best.map_or(true, |(b, _)| cost < b) { best = Some((cost, (dx, dy))); }
+            if best.is_none_or( |(b, _)| cost < b) { best = Some((cost, (dx, dy))); }
         }
         best.map_or((0, 0), |(_, d)| d)
     }

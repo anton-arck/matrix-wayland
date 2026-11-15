@@ -146,8 +146,7 @@ pub struct Snake {
 
 impl Snake {
     pub fn new(pals: Vec<Pal>, tile: i32, hud: bool) -> Self {
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u64;
-        Snake { hud, t_arg: tile, pals, rng: Rng(seed | 1), t: 20, wpx: 0, hpx: 0, ox: 0, gw_all: 0, lanes: vec![], t_all: 0.0 }
+        Snake { hud, t_arg: tile, pals, rng: Rng::from_time(), t: 20, wpx: 0, hpx: 0, ox: 0, gw_all: 0, lanes: vec![], t_all: 0.0 }
     }
 
     fn reset_game(&mut self) {
