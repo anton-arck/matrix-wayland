@@ -108,13 +108,13 @@ fn shade(c: [u8; 3], f: f64) -> [u8; 3] { [(c[0] as f64 * f) as u8, (c[1] as f64
 fn lite(c: [u8; 3]) -> [u8; 3] { let l = |v: u8| (v as f64 + (255.0 - v as f64) * 0.75) as u8; [l(c[0]), l(c[1]), l(c[2])] }
 
 /// Paleta comun para los programas con tema completo (kitty, FireDragon).
-struct Scheme { fg: String, hi: String, url: String, dim: String, mid: String }
+struct Scheme { fg: String, hi: String, url: String, dim: String, mid: String, faint: String }
 fn scheme(accent: Accent) -> Scheme {
     match accent {
-        Accent::One(c) => Scheme { fg: hex(c), hi: hex(c), url: hex(lite(c)), dim: hex(shade(c, 0.28)), mid: hex(shade(c, 0.55)) },
+        Accent::One(c) => Scheme { fg: hex(c), hi: hex(c), url: hex(lite(c)), dim: hex(shade(c, 0.28)), mid: hex(shade(c, 0.55)), faint: hex(shade(c, 0.10)) },
         Accent::Rainbow => {
             let n = |i: usize| NEON[RAINBOW_ORDER[i % RAINBOW_ORDER.len()]].1;
-            Scheme { fg: hex(n(0)), hi: hex(n(1)), url: hex(n(2)), dim: hex(shade(n(3), 0.28)), mid: hex(n(4)) }
+            Scheme { fg: hex(n(0)), hi: hex(n(1)), url: hex(n(2)), dim: hex(shade(n(3), 0.28)), mid: hex(n(4)), faint: hex(shade(n(3), 0.10)) }
         }
     }
 }
@@ -359,7 +359,7 @@ fn nvim_lua_body(accent: Option<Accent>) -> String {
     let Some(a) = accent else { return "-- generado por matrix-wayland: inactivo, se usa el colorscheme\n".to_string() };
     let s = scheme(a);
     format!(
-        "-- generado por matrix-wayland\nlocal fg, hi, url, dim, mid = \"#{fg}\", \"#{hi}\", \"#{url}\", \"#{dim}\", \"#{mid}\"\nlocal k = \"#000000\"\n\
+        "-- generado por matrix-wayland\nlocal fg, hi, url, dim, mid, faint = \"#{fg}\", \"#{hi}\", \"#{url}\", \"#{dim}\", \"#{mid}\", \"#{faint}\"\nlocal k = \"#000000\"\n\
          local map = {{\n\
          \x20 Normal = {{ fg = fg }}, NormalFloat = {{ fg = fg }}, FloatBorder = {{ fg = hi }}, WinSeparator = {{ fg = dim }},\n\
          \x20 Comment = {{ fg = mid, italic = true }}, String = {{ fg = url }}, Character = {{ fg = url }}, Number = {{ fg = url }},\n\
@@ -372,12 +372,32 @@ fn nvim_lua_body(accent: Option<Accent>) -> String {
          \x20 [\"@variable\"] = {{ fg = fg }}, [\"@property\"] = {{ fg = fg }}, [\"@keyword\"] = {{ fg = hi }}, [\"@function\"] = {{ fg = hi, bold = true }},\n\
          \x20 [\"@string\"] = {{ fg = url }}, [\"@number\"] = {{ fg = url }}, [\"@constant\"] = {{ fg = url }}, [\"@type\"] = {{ fg = url }},\n\
          \x20 [\"@comment\"] = {{ fg = mid, italic = true }}, [\"@operator\"] = {{ fg = fg }}, [\"@punctuation\"] = {{ fg = mid }},\n\
+         \x20 CursorLine = {{ bg = faint }}, ColorColumn = {{ bg = faint }}, Folded = {{ fg = mid, bg = faint }}, SignColumn = {{ fg = mid }},\n\
+         \x20 [\"@variable.builtin\"] = {{ fg = url }}, [\"@function.builtin\"] = {{ fg = hi, bold = true }}, [\"@constant.builtin\"] = {{ fg = url }},\n\
+         \x20 [\"@type.builtin\"] = {{ fg = url }}, [\"@module\"] = {{ fg = fg }}, [\"@variable.parameter\"] = {{ fg = fg }}, [\"@constructor\"] = {{ fg = url }},\n\
+         \x20 [\"@keyword.function\"] = {{ fg = hi }}, [\"@keyword.return\"] = {{ fg = hi }}, [\"@keyword.conditional\"] = {{ fg = hi }},\n\
+         \x20 [\"@keyword.repeat\"] = {{ fg = hi }}, [\"@keyword.import\"] = {{ fg = hi }}, [\"@keyword.operator\"] = {{ fg = hi }},\n\
+         \x20 [\"@string.escape\"] = {{ fg = hi }}, [\"@string.special\"] = {{ fg = hi }}, [\"@tag\"] = {{ fg = hi }}, [\"@attribute\"] = {{ fg = mid }},\n\
+         \x20 [\"@punctuation.bracket\"] = {{ fg = mid }}, [\"@punctuation.delimiter\"] = {{ fg = mid }}, [\"@boolean\"] = {{ fg = url }},\n\
+         \x20 GitSignsAdd = {{ fg = hi }}, GitSignsChange = {{ fg = url }}, GitSignsDelete = {{ fg = mid }},\n\
+         \x20 TelescopeSelection = {{ fg = hi, bg = faint }}, TelescopeBorder = {{ fg = hi }}, TelescopeMatching = {{ fg = url, bold = true }},\n\
+         \x20 NeoTreeDirectoryName = {{ fg = hi }}, NeoTreeDirectoryIcon = {{ fg = hi }}, NeoTreeFileName = {{ fg = fg }}, NeoTreeRootName = {{ fg = hi, bold = true }},\n\
+         \x20 WhichKey = {{ fg = url }}, WhichKeyGroup = {{ fg = hi }}, WhichKeyDesc = {{ fg = fg }}, WhichKeySeparator = {{ fg = mid }},\n\
          }}\n\
+         -- lualine: letra a (modo) con fondo de color, b/c/x/y/z discretos\n\
+         local modes = {{ normal = hi, insert = url, visual = mid, replace = url, command = mid, terminal = hi }}\n\
+         for m, bg in pairs(modes) do\n\
+         \x20 map[\"lualine_a_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
+         \x20 for _, l in ipairs({{ \"b\", \"y\" }}) do map[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = hi, bg = dim }} end\n\
+         \x20 for _, l in ipairs({{ \"c\", \"x\" }}) do map[\"lualine_\" .. l .. \"_\" .. m] = {{ fg = fg }} end\n\
+         \x20 map[\"lualine_z_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
+         end\n\
+         map.lualine_a_inactive = {{ fg = mid }}; map.lualine_b_inactive = {{ fg = mid }}; map.lualine_c_inactive = {{ fg = mid }}\n\
          for name, o in pairs(map) do\n\
          \x20 local c = vim.api.nvim_get_hl(0, {{ name = name, link = false }})\n\
          \x20 vim.api.nvim_set_hl(0, name, vim.tbl_extend(\"force\", c, o))\n\
          end\n",
-        fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid)
+        fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid, faint = s.faint)
 }
 
 fn write_nvim_lua(accent: Option<Accent>) -> Result<(), String> {
