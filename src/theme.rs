@@ -403,8 +403,22 @@ fn nvim_lua_body(accent: Option<Accent>) -> String {
          \x20 ll[\"lualine_z_\" .. m] = {{ fg = k, bg = bg, bold = true }}\n\
          end\n\
          ll.lualine_a_inactive = {{ fg = mid }}; ll.lualine_b_inactive = {{ fg = mid }}; ll.lualine_c_inactive = {{ fg = mid }}\n\
-         apply(ll)\n\
-         vim.defer_fn(function() apply(ll); pcall(vim.cmd, \"redrawstatus!\") end, 120)\n",
+         -- fondo negro en las secciones c/x (y en las flechas que las tocan), tambien en sus componentes\n\
+         local function black_bg()\n\
+         \x20 for name in pairs(vim.api.nvim_get_hl(0, {{}})) do\n\
+         \x20   local c = nil\n\
+         \x20   if name:match(\"^lualine_[cx]_\") then c = {{ bg = k }}\n\
+         \x20   elseif name:match(\"^lualine_transitional_\") then\n\
+         \x20     local from, to = name:match(\"^lualine_transitional_lualine_(%a)_\"), name:match(\"_to_lualine_(%a)_\")\n\
+         \x20     c = {{}}\n\
+         \x20     if from == \"c\" or from == \"x\" then c.fg = k end\n\
+         \x20     if to == \"c\" or to == \"x\" then c.bg = k end\n\
+         \x20   end\n\
+         \x20   if c and next(c) then apply({{ [name] = c }}) end\n\
+         \x20 end\n\
+         end\n\
+         apply(ll); black_bg()\n\
+         vim.defer_fn(function() apply(ll); black_bg(); pcall(vim.cmd, \"redrawstatus!\") end, 120)\n",
         fg = s.fg, hi = s.hi, url = s.url, dim = s.dim, mid = s.mid, faint = s.faint)
 }
 
