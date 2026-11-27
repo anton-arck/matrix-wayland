@@ -44,6 +44,12 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
 
   ![tron con rainbow](docs/tron.png)
 
+- **`sleet`**: una noche con aguanieve sobre un puente de piedra con ocho farolas, dibujada con caracteres.
+  Las farolas respiran, los reflejos tiemblan en el río, cae nieve en tres profundidades y algo de lluvia,
+  y cada 45 s cruza un coche con los faros encendidos y detrás pasa una ráfaga de viento. `-c amber` da la
+  luz cálida de farola; con `rainbow`, cada farola tiene su color. Las capas quietas se calculan al
+  arrancar (~0,6 s a 1366x768); el agua se rehace ~10 veces por segundo y el coche, 15 como mucho.
+
 - **`equalizer`**: analizador de espectro con barras de LED rectangulares, como los ecualizadores de las
   cadenas de música, con caída suave y marcador de pico. **Reacciona a lo que suena**: `parec` capta el
   monitor de la salida por defecto (PipeWire o PulseAudio), una FFT propia reparte el espectro en barras

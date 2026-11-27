@@ -3,6 +3,7 @@ mod equalizer;
 mod galaga;
 mod pacman;
 mod scope;
+mod sleet;
 mod snake;
 mod theme;
 mod tron;
@@ -88,6 +89,7 @@ fn make_pal(c: [u8; 3]) -> Pal {
 fn parse_color(v: &str) -> Option<[u8; 3]> {
     let v = v.to_lowercase();
     if let Some((_, c)) = NEON.iter().find(|(n, _)| *n == v) { return Some(*c); }
+    if v == "amber" { return Some([255, 219, 161]); } // luz de farola; fuera de NEON para no alterar rainbow
     let h = v.trim_start_matches('#');
     if h.len() == 6 {
         let n = u32::from_str_radix(h, 16).ok()?;
@@ -563,8 +565,8 @@ fn hex(c: [u8; 3]) -> String { format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2]) }
 
 fn usage() -> ! {
     eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
-  -c COLOR          green cyan magenta pink blue purple orange yellow red | #rrggbb | rainbow
-  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron | equalizer | spectrum | scope
+  -c COLOR          green cyan magenta pink blue purple orange yellow red amber | #rrggbb | rainbow
+  --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron | equalizer | spectrum | scope | sleet
   -s CARACTERES     (matrix) mixed katakana binary digits hex
   --fps N           fotogramas por segundo (matrix 15, el resto 30)
   --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
@@ -622,7 +624,7 @@ fn main() {
         }
         i += 2;
     }
-    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer", "spectrum", "scope"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope)"); std::process::exit(2) }
+    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer", "spectrum", "scope", "sleet"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope|sleet)"); std::process::exit(2) }
     if fps <= 0.0 { fps = if scene_name == "matrix" { 15.0 } else { 30.0 }; }
     let pals: Vec<Pal> = if color.to_lowercase() == "rainbow" {
         NEON.iter().map(|(_, c)| make_pal(*c)).collect()
@@ -640,6 +642,8 @@ fn main() {
         (Painter::plain(), Box::new(pacman::Pacman::new(pals, scale, hud)))
     } else if scene_name == "snake" {
         (Painter::plain(), Box::new(snake::Snake::new(pals, scale, hud)))
+    } else if scene_name == "sleet" {
+        (Painter::plain(), Box::new(sleet::Sleet::new(pals)))
     } else if scene_name == "scope" {
         (Painter::plain(), Box::new(scope::Scope::new(pals, scale, simulate)))
     } else if scene_name == "equalizer" || scene_name == "spectrum" {
