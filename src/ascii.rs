@@ -109,12 +109,6 @@ impl Grid {
         (c >= 0.0 && r >= 0.0 && (c as usize) < self.cols && (r as usize) < self.rows).then(|| r as usize * self.cols + c as usize)
     }
 
-    /// Cobertura (0..255) de un glifo en un pixel de la celda, para quien dibuja encima de la rejilla.
-    pub fn cover(&self, glyph: u8, dx: usize, dy: usize) -> u8 { self.atlas[glyph as usize][dy * self.cw + dx] }
-
-    /// Marca una celda como pisada: se repintara en el siguiente `present`.
-    pub fn invalidate(&mut self, i: usize) { self.drawn[i] = [255; 10]; }
-
     /// Pinta en el framebuffer las celdas que han cambiado.
     pub fn present(&mut self, p: &mut Painter) {
         let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;

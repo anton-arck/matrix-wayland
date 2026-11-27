@@ -1,6 +1,6 @@
 //! Escena "ocean": bajo el mar, en caracteres. Unos pocos peces grandes y detallados (payaso, cirujano
-//! y angel) entre rayos de luz, medusas, algas, corales y burbujas. Los peces se dibujan a nivel de
-//! pixel (silueta suave que ondula) con las letras encima, para que no salten de celda en celda.
+//! y angel) entre rayos de luz, medusas, algas, corales y burbujas. Los peces estan hechos de
+//! caracteres; la forma se mide en su posicion exacta, asi cambia celda a celda y no salta en bloque.
 use super::ascii::*;
 use super::sleet::smooth;
 use super::{Painter, Rng, Scene};
@@ -33,15 +33,13 @@ struct Fish {
     turn_in: f32, // segundos hasta que se plantea girarse
 }
 
-/// Cuanto se desvia el eje del cuerpo en `u`: la cabeza casi quieta y la cola amplia.
-fn wave(u: f32, beat: f32) -> f32 {
-    let back = ((1.0 - u) * 0.5).clamp(0.0, 1.0);
-    (0.02 + 0.26 * back * back) * (beat + u * 2.6).sin()
-}
+/// La cola va de lado a lado: de perfil el cuerpo no se dobla, solo se ve la aleta mas o menos de
+/// canto. Devuelve cuanto de su largo se ve (1 = entera).
+fn tail_seen(beat: f32) -> f32 { 0.62 + 0.38 * beat.cos().abs() }
 
 impl Species {
     fn size(self) -> (f32, f32) {
-        match self { Species::Clown => (19.0, 8.0), Species::Tang => (22.0, 11.0), Species::Angel => (17.0, 16.0) }
+        match self { Species::Clown => (23.0, 10.0), Species::Tang => (26.0, 13.0), Species::Angel => (19.0, 18.0) }
     }
 
     /// Parte en (u, v): u va de -1 (cola) a 1 (hocico) y v de -1 (arriba) a 1 (abajo).
@@ -108,9 +106,18 @@ pub struct Ocean {
 /// Fila de la arena (en alturas de pantalla) en `x`.
 fn floor(x: f32) -> f32 { 0.93 - noise(x * 2.6, 4.0) * 0.07 - noise(x * 9.0, 2.0) * 0.015 }
 
-fn rgb_pixel(c: Rgb) -> u32 {
-    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
-    0xFF00_0000 | b(c[0]) << 16 | b(c[1]) << 8 | b(c[2])
+/// Trazo del contorno segun por que lados se sale del pez (en pantalla).
+fn edge(up: bool, down: bool, left: bool, right: bool) -> Option<u8> {
+    match (up, down, left, right) {
+        (false, false, false, false) => None,
+        (true, _, true, false) => Some(SLASH),
+        (true, _, false, true) => Some(BACKSLASH),
+        (false, true, true, false) => Some(BACKSLASH),
+        (false, true, false, true) => Some(SLASH),
+        (true, ..) | (_, true, ..) => Some(DASH),
+        (_, _, true, _) => Some(OPEN),
+        _ => Some(CLOSE),
+    }
 }
 
 impl Ocean {
@@ -228,122 +235,76 @@ impl Ocean {
         cell.fg = color;
     }
 
-    fn draw_fish(grid: &mut Grid, p: &mut Painter, f: &Fish, t: f32) {
+    fn draw_fish(grid: &mut Grid, f: &Fish, t: f32) {
         let (cw, ch) = (grid.cw as f32, grid.ch as f32);
         // medio largo y medio alto en pixeles; al girarse el pez se estrecha
         let (a, b) = (f.len * cw * 0.5, f.tall * ch * 0.5);
         let side = if f.facing < 0.0 { -1.0 } else { 1.0 };
         let wide = a * f.facing.abs().max(0.12);
         let (cx, cy) = (f.x * cw, f.y * ch);
-        let (sin, cos) = (f.pitch.sin(), f.pitch.cos());
-        // la onda del cuerpo y el brillo del lomo solo dependen de u: se tabulan una vez por pez
-        let table: [(f32, f32); 128] = std::array::from_fn(|i| {
-            let u = i as f32 / 127.0 * 2.4 - 1.2;
-            (wave(u, f.beat), 0.16 * (0.6 + 0.4 * (u * 5.0 - t * 2.0).sin()))
-        });
-        let look = |u: f32| table[(((u + 1.2) * (127.0 / 2.4)) as usize).min(127)];
-        let mouth_open = 0.025 + 0.025 * (t * 2.3 + f.phase).sin().max(0.0);
-        let flap = (t * 5.5 + f.phase).sin(); // la aleta del costado, que se abre y se cierra
-        let (fin_sin, fin_cos) = (0.25 + 0.45 * flap).sin_cos();
-        let (per_wide, per_tall) = (1.0 / wide, 1.0 / b);
+        let (sin, cos) = f.pitch.sin_cos();
+        let stretch = 1.0 / tail_seen(f.beat);
+        let swing = 1.0 + 0.2 * f.beat.sin(); // la cola hacia nosotros se ve mas clara; hacia el fondo, mas oscura
         // de la pantalla a las coordenadas del pez (u hacia el morro, v hacia abajo)
         let local = |x: f32, y: f32| {
             let (dx, dy) = ((x - cx) * side, y - cy);
-            let u = (dx * cos + dy * sin) * per_wide;
-            (u, (dy * cos - dx * sin) * per_tall - look(u).0)
+            let mut u = (dx * cos + dy * sin) / wide;
+            if u < -0.55 { u = -0.55 + (u + 0.55) * stretch; }
+            (u, (dy * cos - dx * sin) / b)
         };
-        let at = |x: f32, y: f32| {
-            let (u, v) = local(x, y);
+        // la celda es del pez si su centro cae dentro
+        let at = |col: i32, row: i32| {
+            let (u, v) = local((col as f32 + 0.5) * cw, (row as f32 + 0.5) * ch);
             f.species.part(u, v, 0.0).map(|part| (part, u, v))
         };
-        let shade = |part: Part, u: f32, v: f32| {
-            let mut color = scale(f.species.color(part, u, v), 1.0 - 0.28 * v.clamp(-0.3, 1.0)); // la luz viene de arriba
-            // un brillo que recorre el lomo
-            let back = (1.0 - ((v + 0.36) * 5.0).powi(2)).max(0.0);
-            if back > 0.0 { color = add(color, [0.5, 0.7, 0.8], back * look(u).1); }
-            if part != Part::Body { return color; }
-            let gill = (u - 0.36 + 0.14 * v * v).abs() < 0.022 && v.abs() < 0.45;
-            let mouth = u > 0.84 && (v - 0.16).abs() < mouth_open;
-            if gill || mouth { scale(color, 0.35) } else { color }
-        };
+
+        // la celda del ojo
+        let (eu, ev) = (0.64, -0.14);
+        let eye = (((cx + side * (eu * wide * cos - ev * b * sin)) / cw).floor() as i32,
+            ((cy + eu * wide * sin + ev * b * cos) / ch).floor() as i32);
+
+        let (mu, mv) = (0.9, 0.16);
+        let mouth = (((cx + side * (mu * wide * cos - mv * b * sin)) / cw).floor() as i32,
+            ((cy + mu * wide * sin + mv * b * cos) / ch).floor() as i32);
 
         let reach = a * sin.abs() + b * 1.45;
         let (x0, x1) = (((cx - a * 1.05) / cw).floor() as i32, ((cx + a * 1.05) / cw).ceil() as i32);
         let (y0, y1) = (((cy - reach) / ch).floor() as i32, ((cy + reach) / ch).ceil() as i32);
+        let flap = (t * 3.0 + f.phase).sin() > 0.0; // la aleta del costado
         for row in y0.max(0)..y1.min(grid.rows as i32) {
             for col in x0.max(0)..x1.min(grid.cols as i32) {
-                let (left, top) = (col as f32 * cw, row as f32 * ch);
-                let probes = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5), (0.5, 0.0), (0.5, 1.0)];
-                let hits = probes.iter().filter(|&&(i, j)| at(left + i * cw, top + j * ch).is_some()).count();
-                if hits == 0 { continue; }
-                let solid = hits == probes.len();
-                // la letra de la celda: escamas, radios de las aletas y de la cola
-                let letter = at(left + cw * 0.5, top + ch * 0.5).map(|(part, u, v)| {
-                    let glyph = match part {
-                        Part::Tail => EQUALS,
-                        Part::Fin => if (v < 0.0) == (side > 0.0) { SLASH } else { BACKSLASH },
-                        Part::Body if (col + row) % 2 == 0 => if side > 0.0 { CLOSE } else { OPEN },
-                        Part::Body => 2,
-                    };
-                    (glyph, mix(shade(part, u, v), [1.0; 3], 0.38))
-                });
-                let cell = row as usize * grid.cols + col as usize;
-                grid.invalidate(cell);
-                for dy in 0..grid.ch {
-                    let py = top as usize + dy;
-                    if py >= p.h { break; }
-                    for dx in 0..grid.cw {
-                        let px = left as usize + dx;
-                        if px >= p.w { break; }
-                        let (x, y) = (px as f32 + 0.5, py as f32 + 0.5);
-                        // por dentro basta una muestra; en el borde, cuatro para suavizarlo
-                        let offsets: &[(f32, f32)] = if solid { &[(0.0, 0.0)] } else { &[(-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)] };
-                        let mut sum = [0.0; 3];
-                        let mut inside = 0;
-                        for &(ox, oy) in offsets {
-                            if let Some((part, u, v)) = at(x + ox, y + oy) {
-                                sum = add(sum, shade(part, u, v), if part == Part::Body { 0.78 } else { 0.62 });
-                                inside += 1;
-                            }
-                        }
-                        if inside == 0 { continue; }
-                        let mut color = scale(sum, 1.0 / inside as f32);
-                        if let Some((glyph, ink)) = letter {
-                            color = mix(color, ink, grid.cover(glyph, dx, dy) as f32 / 255.0 * 0.85);
-                        }
-                        let (u, v) = local(x, y);
-                        // aleta del costado
-                        let (fu, fv) = (u - 0.12, v - 0.22);
-                        let (along, across) = (-fu * fin_cos + fv * fin_sin, fu * fin_sin + fv * fin_cos);
-                        if (0.0..0.34).contains(&along) && across.abs() < 0.11 * (1.0 - (along / 0.34 - 0.5).powi(2) * 3.0) {
-                            color = mix(color, add(color, [1.0; 3], 0.35), 0.7);
-                        }
-                        let alpha = inside as f32 / offsets.len() as f32;
-                        let under = p.fb[py * p.w + px];
-                        let under = [(under >> 16) & 255, (under >> 8) & 255, under & 255].map(|c| c as f32 / 255.0);
-                        p.fb[py * p.w + px] = rgb_pixel(mix(under, color, alpha));
-                    }
+                let Some((part, u, v)) = at(col, row) else { continue };
+                let mut color = scale(f.species.color(part, u, v), 1.0 - 0.25 * v.clamp(0.0, 1.0)); // la luz viene de arriba
+                if part == Part::Tail { color = scale(color, swing); }
+                let stripe = color[0] > 0.9 && color[2] > 0.9; // las bandas blancas
+                let dark = color[0] + color[1] + color[2] < 0.75; // manchas y franjas oscuras
+                let outline = edge(at(col, row - 1).is_none(), at(col, row + 1).is_none(), at(col - 1, row).is_none(), at(col + 1, row).is_none());
+                let (mut glyph, mut ink, mut tint) = match (outline, part) {
+                    (Some(g), _) => (g, mix(color, [1.0; 3], 0.3), 0.16),
+                    (None, Part::Tail) => (EQUALS, color, 0.14),
+                    (None, Part::Fin) => (if (v < 0.0) == (side > 0.0) { SLASH } else { BACKSLASH }, color, 0.12),
+                    (None, Part::Body) if stripe => (7, color, 0.2),
+                    (None, Part::Body) if dark => (2, mix(color, [0.45, 0.5, 0.75], 0.45), 0.5),
+                    // la branquia y las escamas
+                    (None, Part::Body) if (u - 0.36 + 0.14 * v * v).abs() < 0.55 * cw / wide && v.abs() < 0.45 => (BAR, mix(color, [1.0; 3], 0.55), 0.2),
+                    (None, Part::Body) => (if side > 0.0 { CLOSE } else { OPEN }, color, 0.24),
+                };
+                // aleta del costado
+                let fin_v = if flap { 0.2 } else { 0.36 };
+                if outline.is_none() && (-0.2..0.14).contains(&u) && (v - fin_v + 0.4 * (u - 0.14)).abs() < 0.11 {
+                    (glyph, ink) = (EQUALS, mix(color, [1.0; 3], 0.6));
                 }
-            }
-        }
-
-        // el ojo, redondo y mirando hacia delante
-        let (eu, ev) = (0.64, -0.14 + wave(0.64, f.beat));
-        let (ex, ey) = (cx + side * (eu * wide * cos - ev * b * sin), cy + eu * wide * sin + ev * b * cos);
-        let radius = (b * 0.15).max(2.5);
-        let blink = if (t * 0.45 + f.phase).sin() > 0.995 { 0.2 } else { 1.0 };
-        for py in (ey - radius - 1.0).max(0.0) as usize..((ey + radius + 2.0).max(0.0) as usize).min(p.h) {
-            for px in (ex - radius - 1.0).max(0.0) as usize..((ex + radius + 2.0).max(0.0) as usize).min(p.w) {
-                let (dx, dy) = (px as f32 + 0.5 - ex, (py as f32 + 0.5 - ey) / blink);
-                let white = (radius - dx.hypot(dy) + 0.5).clamp(0.0, 1.0);
-                if white == 0.0 { continue; }
-                let pupil = (radius * 0.58 - (dx - side * radius * 0.22).hypot(dy) + 0.5).clamp(0.0, 1.0);
-                let glint = (radius * 0.18 - (dx - side * radius * 0.4).hypot(dy + radius * 0.25) + 0.5).clamp(0.0, 1.0);
-                let eye = mix(mix([0.95, 0.97, 1.0], [0.01, 0.01, 0.04], pupil), [1.0; 3], glint);
-                let under = p.fb[py * p.w + px];
-                let under = [(under >> 16) & 255, (under >> 8) & 255, under & 255].map(|c| c as f32 / 255.0);
-                p.fb[py * p.w + px] = rgb_pixel(mix(under, eye, white));
-                grid.invalidate((py / grid.ch) * grid.cols + px / grid.cw);
+                // la boca, que se abre y se cierra
+                if (col, row) == mouth {
+                    (glyph, ink) = (if (t * 2.3 + f.phase).sin() > 0.3 { RING } else { DASH }, [1.0, 0.92, 0.85]);
+                }
+                if (col, row) == eye {
+                    (glyph, ink, tint) = (AT, [1.0, 1.0, 1.0], 0.0);
+                }
+                let cell = &mut grid.cells[row as usize * grid.cols + col as usize];
+                cell.glyph = glyph;
+                cell.fg = ink;
+                cell.bg = if (col, row) == eye { [0.01, 0.01, 0.03] } else { mix(cell.bg, color, tint) };
             }
         }
     }
@@ -354,20 +315,20 @@ impl Ocean {
         let t = self.t;
         for i in 0..self.fish.len() {
             let f = &mut self.fish[i];
-            // impulso y planeo: la cola bate mas deprisa cuando empuja
-            let push = (t * 0.7 + f.phase).sin().max(0.0).powi(2);
-            let goal = f.cruise * (0.6 + 1.1 * push);
-            f.speed += (goal - f.speed) * (dt * 1.8).min(1.0);
-            f.beat = (f.beat + dt * (2.2 + 1.3 * f.speed * (0.4 + push))) % std::f32::consts::TAU;
+            // nado tranquilo: de vez en cuando un empujon suave y a planear
+            let push = (t * 0.35 + f.phase).sin().max(0.0).powi(4);
+            let goal = f.cruise * (0.8 + 0.6 * push);
+            f.speed += (goal - f.speed) * (dt * 0.9).min(1.0);
+            f.beat = (f.beat + dt * (2.0 + 0.45 * f.speed + 2.0 * push)) % std::f32::consts::TAU;
             // girarse tarda cerca de un segundo
             f.facing += (f.dir - f.facing).clamp(-2.4 * dt, 2.4 * dt);
             f.x += f.speed * f.facing * dt;
             // sube y baja sin prisa alrededor de su franja, inclinando el morro
-            let target = f.lane + (t * 0.23 + f.phase).sin() * rows * 0.07 + (t * 0.57 + f.phase * 2.0).sin() * rows * 0.025;
-            let rise = (target - f.y) * 0.8;
+            let target = f.lane + (t * 0.11 + f.phase).sin() * rows * 0.045;
+            let rise = (target - f.y) * 0.5;
             f.y += rise * dt;
-            let slope = (rise * 10.0 / 9.0 / f.speed.max(1.0)).atan().clamp(-0.32, 0.32);
-            f.pitch += (slope - f.pitch) * (dt * 2.0).min(1.0);
+            let slope = (rise * 10.0 / 9.0 / f.speed.max(1.0)).atan().clamp(-0.14, 0.14);
+            f.pitch += (slope - f.pitch) * (dt * 1.0).min(1.0);
             // a veces da media vuelta, si esta bien dentro de la pantalla
             f.turn_in -= dt;
             if f.turn_in <= 0.0 {
@@ -451,8 +412,8 @@ impl Scene for Ocean {
         self.swim(dt);
         self.water();
         self.life(dt);
+        for f in &self.fish { Ocean::draw_fish(&mut self.grid, f, self.t); }
         self.grid.present(p);
-        for f in &self.fish { Ocean::draw_fish(&mut self.grid, p, f, self.t); }
     }
 }
 
@@ -473,9 +434,8 @@ mod tests {
             assert_eq!(seen, [true; 3]);
             assert!(species.part(0.2, 0.0, 0.0) == Some(Part::Body));
         }
-        // el cuerpo ondula: la cola se mueve mucho mas que la cabeza
-        let sway = |u: f32| (0..60).map(|k| wave(u, k as f32 * 0.1).abs()).fold(0.0, f32::max);
-        assert!(sway(-1.0) > 5.0 * sway(0.9));
+        // la cola nunca desaparece ni se estira de mas
+        assert!((0..60).map(|k| tail_seen(k as f32 * 0.1)).all(|seen| (0.6..=1.0).contains(&seen)));
     }
 
     #[test]
