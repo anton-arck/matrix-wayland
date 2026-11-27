@@ -17,6 +17,11 @@ pub const SLASH: u8 = 11; // /
 pub const BACKSLASH: u8 = 12; // \
 pub const TILDE: u8 = 13; // ~
 pub const CARET: u8 = 14; // ^
+pub const LESS: u8 = 15; // <
+pub const GREATER: u8 = 16; // >
+pub const OPEN: u8 = 17; // (
+pub const CLOSE: u8 = 18; // )
+pub const RING: u8 = 19; // o
 
 #[derive(Clone, Copy, Default)]
 pub struct Cell { pub glyph: u8, pub fg: Rgb, pub bg: Rgb }
@@ -75,6 +80,11 @@ impl Grid {
         strokes.push(vec![seg((2.0, 1.5), (7.0, 8.5))]);
         strokes.push(vec![seg((1.0, 6.0), (3.0, 4.2)), seg((3.0, 4.2), (6.0, 6.0)), seg((6.0, 6.0), (8.0, 4.2))]);
         strokes.push(vec![seg((1.8, 6.0), (4.5, 2.5)), seg((4.5, 2.5), (7.2, 6.0))]);
+        strokes.push(vec![seg((7.0, 2.0), (2.0, 5.0)), seg((2.0, 5.0), (7.0, 8.0))]);
+        strokes.push(vec![seg((2.0, 2.0), (7.0, 5.0)), seg((7.0, 5.0), (2.0, 8.0))]);
+        strokes.push(vec![seg((6.2, 1.5), (3.8, 3.5)), seg((3.8, 3.5), (3.8, 6.5)), seg((3.8, 6.5), (6.2, 8.5))]);
+        strokes.push(vec![seg((2.8, 1.5), (5.2, 3.5)), seg((5.2, 3.5), (5.2, 6.5)), seg((5.2, 6.5), (2.8, 8.5))]);
+        strokes.push(vec![Stroke::Circle((4.5, 5.0), 2.4)]);
         self.atlas = strokes.iter().map(|glyph| {
             (0..cw * ch).map(|i| {
                 let at = (((i % cw) as f32 + 0.5) / sx, ((i / cw) as f32 + 0.5) / sy);
