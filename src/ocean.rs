@@ -1,5 +1,6 @@
 //! Escena "ocean": bajo el mar, en caracteres. Unos pocos peces grandes y detallados (payaso, cirujano
-//! y angel) entre rayos de luz, medusas, algas, corales y burbujas.
+//! y angel) entre rayos de luz, medusas, algas, corales y burbujas. Los peces se dibujan a nivel de
+//! pixel (silueta suave que ondula) con las letras encima, para que no salten de celda en celda.
 use super::ascii::*;
 use super::sleet::smooth;
 use super::{Painter, Rng, Scene};
@@ -19,10 +20,23 @@ struct Fish {
     species: Species,
     len: f32, // largo y alto en celdas
     tall: f32,
-    x: f32, // columna de su extremo izquierdo
-    y: f32, // fila del eje del cuerpo
-    speed: f32, // columnas por segundo, con signo
+    x: f32, // columna del centro
+    y: f32, // fila del centro
+    lane: f32,
+    cruise: f32, // celdas por segundo
+    speed: f32, // la de ahora: da un impulso y planea
+    dir: f32, // hacia donde quiere ir: 1 o -1
+    facing: f32, // hacia donde mira; pasa de un lado a otro al girarse
+    pitch: f32, // inclinacion del cuerpo (positivo: morro abajo)
+    beat: f32, // fase de la cola
     phase: f32,
+    turn_in: f32, // segundos hasta que se plantea girarse
+}
+
+/// Cuanto se desvia el eje del cuerpo en `u`: la cabeza casi quieta y la cola amplia.
+fn wave(u: f32, beat: f32) -> f32 {
+    let back = ((1.0 - u) * 0.5).clamp(0.0, 1.0);
+    (0.02 + 0.26 * back * back) * (beat + u * 2.6).sin()
 }
 
 impl Species {
@@ -91,30 +105,13 @@ pub struct Ocean {
     t: f32,
 }
 
-/// El mismo caracter visto en un espejo.
-fn mirror(glyph: u8) -> u8 {
-    match glyph {
-        SLASH => BACKSLASH, BACKSLASH => SLASH, OPEN => CLOSE, CLOSE => OPEN, LESS => GREATER, GREATER => LESS,
-        other => other,
-    }
-}
-
-/// Trazo del contorno segun por que lados se sale del pez (mirando a la derecha).
-fn edge(up: bool, down: bool, left: bool, right: bool) -> Option<u8> {
-    match (up, down, left, right) {
-        (false, false, false, false) => None,
-        (true, _, true, false) => Some(SLASH),
-        (true, _, false, true) => Some(BACKSLASH),
-        (false, true, true, false) => Some(BACKSLASH),
-        (false, true, false, true) => Some(SLASH),
-        (true, ..) | (_, true, ..) => Some(DASH),
-        (_, _, true, _) => Some(OPEN),
-        _ => Some(CLOSE),
-    }
-}
-
 /// Fila de la arena (en alturas de pantalla) en `x`.
 fn floor(x: f32) -> f32 { 0.93 - noise(x * 2.6, 4.0) * 0.07 - noise(x * 9.0, 2.0) * 0.015 }
+
+fn rgb_pixel(c: Rgb) -> u32 {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    0xFF00_0000 | b(c[0]) << 16 | b(c[1]) << 8 | b(c[2])
+}
 
 impl Ocean {
     pub fn new() -> Self {
@@ -130,16 +127,20 @@ impl Ocean {
         let (len, tall) = species.size();
         let (len, tall) = ((len * scale).max(7.0).round(), (tall * scale).max(4.0).round());
         let right = self.rng.f() < 0.5;
-        let speed = self.rng.rf(2.5, 5.5) * if right { 1.0 } else { -1.0 };
+        let dir = if right { 1.0 } else { -1.0 };
         let x = if inside {
-            cols * (0.1 + 0.16 * ((i * 3) % 5) as f32) + self.rng.rf(-4.0, 4.0)
+            cols * (0.18 + 0.16 * ((i * 3) % 5) as f32) + self.rng.rf(-4.0, 4.0)
         } else if right {
-            -len - self.rng.rf(0.0, cols * 0.08)
+            -len * 0.5 - self.rng.rf(0.0, cols * 0.08)
         } else {
-            cols + self.rng.rf(0.0, cols * 0.08)
+            cols + len * 0.5 + self.rng.rf(0.0, cols * 0.08)
         };
         let lane = rows * (0.17 + 0.135 * i as f32);
-        Fish { species, len, tall, x, y: lane + self.rng.rf(-2.0, 2.0), speed, phase: self.rng.rf(0.0, 6.28) }
+        let cruise = self.rng.rf(2.5, 5.0);
+        Fish {
+            species, len, tall, x, y: lane, lane, cruise, speed: cruise, dir, facing: dir, pitch: 0.0,
+            beat: self.rng.rf(0.0, 6.28), phase: self.rng.rf(0.0, 6.28), turn_in: self.rng.rf(8.0, 30.0),
+        }
     }
 
     fn populate(&mut self) {
@@ -227,55 +228,165 @@ impl Ocean {
         cell.fg = color;
     }
 
-    fn draw_fish(grid: &mut Grid, f: &Fish, t: f32) {
-        let mirrored = f.speed < 0.0;
-        let (len, tall) = (f.len as i32, f.tall as i32);
-        let left = f.x.round() as i32;
-        let row = (f.y + (t * 0.9 + f.phase).sin() * 0.8).round() as i32;
-        let flap = (t * 4.0 + f.phase).sin();
-        // el pez mirando a la derecha: columna i, fila j de su caja
-        let uv = |i: i32, j: i32| ((i as f32 + 0.5) / len as f32 * 2.0 - 1.0, (j as f32 + 0.5) / tall as f32 * 2.0 - 1.0);
-        let part = |i: i32, j: i32| {
-            let (u, v) = uv(i, j);
-            f.species.part(u, v, flap)
+    fn draw_fish(grid: &mut Grid, p: &mut Painter, f: &Fish, t: f32) {
+        let (cw, ch) = (grid.cw as f32, grid.ch as f32);
+        // medio largo y medio alto en pixeles; al girarse el pez se estrecha
+        let (a, b) = (f.len * cw * 0.5, f.tall * ch * 0.5);
+        let side = if f.facing < 0.0 { -1.0 } else { 1.0 };
+        let wide = a * f.facing.abs().max(0.12);
+        let (cx, cy) = (f.x * cw, f.y * ch);
+        let (sin, cos) = (f.pitch.sin(), f.pitch.cos());
+        // la onda del cuerpo y el brillo del lomo solo dependen de u: se tabulan una vez por pez
+        let table: [(f32, f32); 128] = std::array::from_fn(|i| {
+            let u = i as f32 / 127.0 * 2.4 - 1.2;
+            (wave(u, f.beat), 0.16 * (0.6 + 0.4 * (u * 5.0 - t * 2.0).sin()))
+        });
+        let look = |u: f32| table[(((u + 1.2) * (127.0 / 2.4)) as usize).min(127)];
+        let mouth_open = 0.025 + 0.025 * (t * 2.3 + f.phase).sin().max(0.0);
+        let flap = (t * 5.5 + f.phase).sin(); // la aleta del costado, que se abre y se cierra
+        let (fin_sin, fin_cos) = (0.25 + 0.45 * flap).sin_cos();
+        let (per_wide, per_tall) = (1.0 / wide, 1.0 / b);
+        // de la pantalla a las coordenadas del pez (u hacia el morro, v hacia abajo)
+        let local = |x: f32, y: f32| {
+            let (dx, dy) = ((x - cx) * side, y - cy);
+            let u = (dx * cos + dy * sin) * per_wide;
+            (u, (dy * cos - dx * sin) * per_tall - look(u).0)
         };
-        let eye = (((0.64 + 1.0) * 0.5 * len as f32) as i32, ((-0.16 + 1.0) * 0.5 * tall as f32) as i32);
-        for j in -1..=tall {
-            for i in 0..len {
-                let Some(kind) = part(i, j) else { continue };
-                let (u, v) = uv(i, j);
-                let color = f.species.color(kind, u, v);
-                let belly = 1.0 - 0.22 * v.max(0.0); // la luz viene de arriba
-                let color = scale(color, belly);
-                let outline = edge(part(i, j - 1).is_none(), part(i, j + 1).is_none(), part(i - 1, j).is_none(), part(i + 1, j).is_none());
-                let (mut glyph, mut ink, back) = match (outline, kind) {
-                    (Some(g), _) => (g, mix(color, [1.0; 3], 0.45), 0.42),
-                    (None, Part::Tail) => (EQUALS, mix(color, [1.0; 3], 0.25), 0.55),
-                    (None, Part::Fin) => (if v < 0.0 { SLASH } else { BACKSLASH }, mix(color, [1.0; 3], 0.2), 0.5),
-                    // escamas, y la branquia detras de la cabeza
-                    (None, Part::Body) if (u - 0.36 + 0.12 * v * v).abs() < 1.0 / len as f32 && v.abs() < 0.45 => (CLOSE, scale(color, 0.25), 0.8),
-                    (None, Part::Body) => (if (i + j) % 2 == 0 { CLOSE } else { 2 }, mix(color, [1.0; 3], 0.15), 0.7),
-                };
-                let mut bg = scale(color, back);
-                if (i, j) == eye {
-                    (glyph, ink, bg) = (AT, [0.02, 0.02, 0.05], [0.98, 0.98, 1.0]);
+        let at = |x: f32, y: f32| {
+            let (u, v) = local(x, y);
+            f.species.part(u, v, 0.0).map(|part| (part, u, v))
+        };
+        let shade = |part: Part, u: f32, v: f32| {
+            let mut color = scale(f.species.color(part, u, v), 1.0 - 0.28 * v.clamp(-0.3, 1.0)); // la luz viene de arriba
+            // un brillo que recorre el lomo
+            let back = (1.0 - ((v + 0.36) * 5.0).powi(2)).max(0.0);
+            if back > 0.0 { color = add(color, [0.5, 0.7, 0.8], back * look(u).1); }
+            if part != Part::Body { return color; }
+            let gill = (u - 0.36 + 0.14 * v * v).abs() < 0.022 && v.abs() < 0.45;
+            let mouth = u > 0.84 && (v - 0.16).abs() < mouth_open;
+            if gill || mouth { scale(color, 0.35) } else { color }
+        };
+
+        let reach = a * sin.abs() + b * 1.45;
+        let (x0, x1) = (((cx - a * 1.05) / cw).floor() as i32, ((cx + a * 1.05) / cw).ceil() as i32);
+        let (y0, y1) = (((cy - reach) / ch).floor() as i32, ((cy + reach) / ch).ceil() as i32);
+        for row in y0.max(0)..y1.min(grid.rows as i32) {
+            for col in x0.max(0)..x1.min(grid.cols as i32) {
+                let (left, top) = (col as f32 * cw, row as f32 * ch);
+                let probes = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5), (0.5, 0.0), (0.5, 1.0)];
+                let hits = probes.iter().filter(|&&(i, j)| at(left + i * cw, top + j * ch).is_some()).count();
+                if hits == 0 { continue; }
+                let solid = hits == probes.len();
+                // la letra de la celda: escamas, radios de las aletas y de la cola
+                let letter = at(left + cw * 0.5, top + ch * 0.5).map(|(part, u, v)| {
+                    let glyph = match part {
+                        Part::Tail => EQUALS,
+                        Part::Fin => if (v < 0.0) == (side > 0.0) { SLASH } else { BACKSLASH },
+                        Part::Body if (col + row) % 2 == 0 => if side > 0.0 { CLOSE } else { OPEN },
+                        Part::Body => 2,
+                    };
+                    (glyph, mix(shade(part, u, v), [1.0; 3], 0.38))
+                });
+                let cell = row as usize * grid.cols + col as usize;
+                grid.invalidate(cell);
+                for dy in 0..grid.ch {
+                    let py = top as usize + dy;
+                    if py >= p.h { break; }
+                    for dx in 0..grid.cw {
+                        let px = left as usize + dx;
+                        if px >= p.w { break; }
+                        let (x, y) = (px as f32 + 0.5, py as f32 + 0.5);
+                        // por dentro basta una muestra; en el borde, cuatro para suavizarlo
+                        let offsets: &[(f32, f32)] = if solid { &[(0.0, 0.0)] } else { &[(-0.25, -0.25), (0.25, -0.25), (-0.25, 0.25), (0.25, 0.25)] };
+                        let mut sum = [0.0; 3];
+                        let mut inside = 0;
+                        for &(ox, oy) in offsets {
+                            if let Some((part, u, v)) = at(x + ox, y + oy) {
+                                sum = add(sum, shade(part, u, v), if part == Part::Body { 0.78 } else { 0.62 });
+                                inside += 1;
+                            }
+                        }
+                        if inside == 0 { continue; }
+                        let mut color = scale(sum, 1.0 / inside as f32);
+                        if let Some((glyph, ink)) = letter {
+                            color = mix(color, ink, grid.cover(glyph, dx, dy) as f32 / 255.0 * 0.85);
+                        }
+                        let (u, v) = local(x, y);
+                        // aleta del costado
+                        let (fu, fv) = (u - 0.12, v - 0.22);
+                        let (along, across) = (-fu * fin_cos + fv * fin_sin, fu * fin_sin + fv * fin_cos);
+                        if (0.0..0.34).contains(&along) && across.abs() < 0.11 * (1.0 - (along / 0.34 - 0.5).powi(2) * 3.0) {
+                            color = mix(color, add(color, [1.0; 3], 0.35), 0.7);
+                        }
+                        let alpha = inside as f32 / offsets.len() as f32;
+                        let under = p.fb[py * p.w + px];
+                        let under = [(under >> 16) & 255, (under >> 8) & 255, under & 255].map(|c| c as f32 / 255.0);
+                        p.fb[py * p.w + px] = rgb_pixel(mix(under, color, alpha));
+                    }
                 }
-                let (col, row) = (left + if mirrored { len - 1 - i } else { i }, row - tall / 2 + j);
-                if col < 0 || row < 0 || col >= grid.cols as i32 || row >= grid.rows as i32 { continue; }
-                let glyph = if mirrored && (i, j) != eye { mirror(glyph) } else { glyph };
-                grid.cells[row as usize * grid.cols + col as usize] = Cell { glyph, fg: ink, bg };
+            }
+        }
+
+        // el ojo, redondo y mirando hacia delante
+        let (eu, ev) = (0.64, -0.14 + wave(0.64, f.beat));
+        let (ex, ey) = (cx + side * (eu * wide * cos - ev * b * sin), cy + eu * wide * sin + ev * b * cos);
+        let radius = (b * 0.15).max(2.5);
+        let blink = if (t * 0.45 + f.phase).sin() > 0.995 { 0.2 } else { 1.0 };
+        for py in (ey - radius - 1.0).max(0.0) as usize..((ey + radius + 2.0).max(0.0) as usize).min(p.h) {
+            for px in (ex - radius - 1.0).max(0.0) as usize..((ex + radius + 2.0).max(0.0) as usize).min(p.w) {
+                let (dx, dy) = (px as f32 + 0.5 - ex, (py as f32 + 0.5 - ey) / blink);
+                let white = (radius - dx.hypot(dy) + 0.5).clamp(0.0, 1.0);
+                if white == 0.0 { continue; }
+                let pupil = (radius * 0.58 - (dx - side * radius * 0.22).hypot(dy) + 0.5).clamp(0.0, 1.0);
+                let glint = (radius * 0.18 - (dx - side * radius * 0.4).hypot(dy + radius * 0.25) + 0.5).clamp(0.0, 1.0);
+                let eye = mix(mix([0.95, 0.97, 1.0], [0.01, 0.01, 0.04], pupil), [1.0; 3], glint);
+                let under = p.fb[py * p.w + px];
+                let under = [(under >> 16) & 255, (under >> 8) & 255, under & 255].map(|c| c as f32 / 255.0);
+                p.fb[py * p.w + px] = rgb_pixel(mix(under, eye, white));
+                grid.invalidate((py / grid.ch) * grid.cols + px / grid.cw);
             }
         }
     }
 
     fn swim(&mut self, dt: f32) {
         let cols = self.grid.cols as f32;
+        let rows = self.grid.rows as f32;
+        let t = self.t;
         for i in 0..self.fish.len() {
             let f = &mut self.fish[i];
-            f.x += f.speed * dt;
-            if (f.speed > 0.0 && f.x > cols + 4.0) || (f.speed < 0.0 && f.x < -f.len - 4.0) {
+            // impulso y planeo: la cola bate mas deprisa cuando empuja
+            let push = (t * 0.7 + f.phase).sin().max(0.0).powi(2);
+            let goal = f.cruise * (0.6 + 1.1 * push);
+            f.speed += (goal - f.speed) * (dt * 1.8).min(1.0);
+            f.beat = (f.beat + dt * (2.2 + 1.3 * f.speed * (0.4 + push))) % std::f32::consts::TAU;
+            // girarse tarda cerca de un segundo
+            f.facing += (f.dir - f.facing).clamp(-2.4 * dt, 2.4 * dt);
+            f.x += f.speed * f.facing * dt;
+            // sube y baja sin prisa alrededor de su franja, inclinando el morro
+            let target = f.lane + (t * 0.23 + f.phase).sin() * rows * 0.07 + (t * 0.57 + f.phase * 2.0).sin() * rows * 0.025;
+            let rise = (target - f.y) * 0.8;
+            f.y += rise * dt;
+            let slope = (rise * 10.0 / 9.0 / f.speed.max(1.0)).atan().clamp(-0.32, 0.32);
+            f.pitch += (slope - f.pitch) * (dt * 2.0).min(1.0);
+            // a veces da media vuelta, si esta bien dentro de la pantalla
+            f.turn_in -= dt;
+            if f.turn_in <= 0.0 {
+                f.turn_in = self.rng.rf(10.0, 35.0);
+                if f.x > cols * 0.2 && f.x < cols * 0.8 { f.dir = -f.dir; }
+            }
+            let f = &self.fish[i];
+            if (f.dir > 0.0 && f.x - f.len * 0.5 > cols + 4.0) || (f.dir < 0.0 && f.x + f.len * 0.5 < -4.0) {
                 self.fish[i] = self.swimmer(i, false);
             }
+        }
+        // de vez en cuando alguno suelta una burbuja
+        if self.rng.f() < (dt * 0.9) as f64 {
+            let f = &self.fish[(self.rng.next() % self.fish.len() as u64) as usize];
+            let height = (self.grid.rows * self.grid.ch) as f32;
+            let x = (f.x + f.facing * f.len * 0.52) * self.grid.cw as f32 / height;
+            let y = f.y / self.grid.rows as f32;
+            let (speed, phase) = (self.rng.rf(0.07, 0.14), self.rng.rf(0.0, 6.28));
+            self.bubbles.push(Bubble { x, y, speed, phase });
         }
     }
 
@@ -340,8 +451,8 @@ impl Scene for Ocean {
         self.swim(dt);
         self.water();
         self.life(dt);
-        for f in &self.fish { Ocean::draw_fish(&mut self.grid, f, self.t); }
         self.grid.present(p);
+        for f in &self.fish { Ocean::draw_fish(&mut self.grid, p, f, self.t); }
     }
 }
 
@@ -362,22 +473,28 @@ mod tests {
             assert_eq!(seen, [true; 3]);
             assert!(species.part(0.2, 0.0, 0.0) == Some(Part::Body));
         }
-        assert_eq!(mirror(mirror(SLASH)), SLASH);
+        // el cuerpo ondula: la cola se mueve mucho mas que la cabeza
+        let sway = |u: f32| (0..60).map(|k| wave(u, k as f32 * 0.1).abs()).fold(0.0, f32::max);
+        assert!(sway(-1.0) > 5.0 * sway(0.9));
     }
 
     #[test]
-    fn the_same_few_fish_keep_coming_back() {
+    fn the_same_few_fish_keep_coming_back_and_turn() {
         let mut s = Ocean::new();
         let mut p = Painter::plain();
         s.resize(&mut p, 640, 360);
-        let mut returns = 0;
-        for _ in 0..30 * 300 {
-            let before: Vec<f32> = s.fish.iter().map(|f| f.speed).collect();
+        let (mut returns, mut turns) = (0, 0);
+        for _ in 0..30 * 600 {
+            let before: Vec<(f32, f32)> = s.fish.iter().map(|f| (f.x, f.dir)).collect();
+            s.t += 1.0 / 30.0;
             s.swim(1.0 / 30.0);
-            returns += s.fish.iter().zip(before).filter(|(f, speed)| f.speed != *speed).count();
+            for (f, (x, dir)) in s.fish.iter().zip(before) {
+                if (f.x - x).abs() > 5.0 { returns += 1; } else if f.dir != dir { turns += 1; }
+                assert!(f.x.is_finite() && f.y.is_finite() && f.facing.abs() <= 1.0);
+            }
             assert_eq!(s.fish.len(), SHOAL.len());
         }
-        assert!(returns > 5);
+        assert!(returns > 5 && turns > 5, "vuelven {returns}, giran {turns}");
     }
 
     #[test]

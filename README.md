@@ -56,8 +56,9 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   - **`stars`**: cielo estrellado con la vía láctea sobre unas lomas; cada 3 a 9 s cruza una estrella fugaz
     por un sitio al azar (a veces dos seguidas).
   - **`aurora`**: cortinas de aurora boreal sobre montañas nevadas, un pinar y un lago que las refleja.
-  - **`ocean`**: bajo el mar, con cinco peces grandes y detallados (payaso, cirujano y ángel), rayos de
-    luz, medusas, algas, corales y burbujas.
+  - **`ocean`**: bajo el mar, con cinco peces grandes (payaso, cirujano y ángel) de silueta suave con
+    textura de caracteres: ondulan al nadar, se impulsan y planean, se inclinan, se giran y sueltan burbujas.
+    Rayos de luz, medusas, algas y corales.
 
 - **`equalizer`**: analizador de espectro con barras de LED rectangulares, como los ecualizadores de las
   cadenas de música, con caída suave y marcador de pico. **Reacciona a lo que suena**: `parec` capta el
