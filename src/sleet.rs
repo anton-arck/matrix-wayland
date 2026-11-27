@@ -30,7 +30,7 @@ const CAR_EVERY: f32 = 0.06; // el coche, 15 veces por segundo como mucho
 
 type P = (f32, f32);
 
-fn smooth(a: f32, b: f32, x: f32) -> f32 {
+pub(crate) fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let u = ((x - a) / (b - a)).clamp(0.0, 1.0);
     u * u * (3.0 - 2.0 * u)
 }
@@ -144,9 +144,9 @@ impl Noise {
 
 // ---------- formas pequenas: tiempo y letras ----------
 #[derive(Clone, Copy)]
-enum Stroke { Seg(P, P), Circle(P, f32) }
+pub(crate) enum Stroke { Seg(P, P), Circle(P, f32) }
 
-fn distance(s: Stroke, p: P) -> f32 {
+pub(crate) fn distance(s: Stroke, p: P) -> f32 {
     let len = |x: f32, y: f32| (x * x + y * y).sqrt();
     match s {
         Stroke::Seg(a, b) => {
@@ -191,7 +191,7 @@ fn star(a: f32, k: f32) -> Sprite {
 fn ring(r: f32, k: f32) -> Sprite { sprite(&[Stroke::Circle((0.0, 0.0), r)], 0.6, k) }
 
 /// Trazos de cada caracter de la rampa " .:-=+*#%@" en una celda de 9 x 10.
-fn ramp_strokes() -> [Vec<Stroke>; 10] {
+pub(crate) fn ramp_strokes() -> [Vec<Stroke>; 10] {
     use Stroke::{Circle, Seg};
     let d = |x: f32, y: f32| Seg((x, y), (x, y));
     [

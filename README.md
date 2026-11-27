@@ -50,6 +50,13 @@ El fondo es una **escena** (`--scene`), todas en negro y con el color que elijas
   luz cálida de farola; con `rainbow`, cada farola tiene su color. Las capas quietas se calculan al
   arrancar (~0,6 s a 1366x768); el agua se rehace ~10 veces por segundo y el coche, 15 como mucho.
 
+- **Paisajes** en caracteres, con sus propios colores (`-c` solo afecta a los programas con tema):
+  - **`sunset`**: el sol se esconde en el mar, con nubes, oleaje, su reflejo y un velero. El ciclo dura
+    150 s: atardecer, crepúsculo con las primeras estrellas, fundido y vuelta a empezar.
+  - **`stars`**: cielo estrellado con la vía láctea sobre unas lomas; cada 3 a 9 s cruza una estrella fugaz
+    por un sitio al azar (a veces dos seguidas).
+  - **`aurora`**: cortinas de aurora boreal sobre montañas nevadas, un pinar y un lago que las refleja.
+
 - **`equalizer`**: analizador de espectro con barras de LED rectangulares, como los ecualizadores de las
   cadenas de música, con caída suave y marcador de pico. **Reacciona a lo que suena**: `parec` capta el
   monitor de la salida por defecto (PipeWire o PulseAudio), una FFT propia reparte el espectro en barras

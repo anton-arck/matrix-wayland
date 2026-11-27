@@ -1,10 +1,14 @@
 //! Efecto Matrix como fondo de pantalla Wayland (wlr-layer-shell + wl_shm).
+mod ascii;
+mod aurora;
 mod equalizer;
 mod galaga;
 mod pacman;
 mod scope;
 mod sleet;
 mod snake;
+mod stars;
+mod sunset;
 mod theme;
 mod tron;
 
@@ -567,6 +571,7 @@ fn usage() -> ! {
     eprintln!("uso: matrix-wayland [start|stop|restart|status] [opciones]
   -c COLOR          green cyan magenta pink blue purple orange yellow red amber | #rrggbb | rainbow
   --scene NOMBRE    matrix (por defecto) | galaga | pacman | snake | tron | equalizer | spectrum | scope | sleet
+                    sunset | stars | aurora (paisajes con sus propios colores)
   -s CARACTERES     (matrix) mixed katakana binary digits hex
   --fps N           fotogramas por segundo (matrix 15, el resto 30)
   --size PX         (matrix) tamano del glifo      --font RUTA   fuente con katakana
@@ -624,7 +629,7 @@ fn main() {
         }
         i += 2;
     }
-    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer", "spectrum", "scope", "sleet"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope|sleet)"); std::process::exit(2) }
+    if !["matrix", "galaga", "pacman", "snake", "tron", "equalizer", "spectrum", "scope", "sleet", "sunset", "stars", "aurora"].contains(&scene_name.as_str()) { eprintln!("escena desconocida: {scene_name:?} (matrix|galaga|pacman|snake|tron|equalizer|spectrum|scope|sleet|sunset|stars|aurora)"); std::process::exit(2) }
     if fps <= 0.0 { fps = if scene_name == "matrix" { 15.0 } else { 30.0 }; }
     let pals: Vec<Pal> = if color.to_lowercase() == "rainbow" {
         NEON.iter().map(|(_, c)| make_pal(*c)).collect()
@@ -644,6 +649,12 @@ fn main() {
         (Painter::plain(), Box::new(snake::Snake::new(pals, scale, hud)))
     } else if scene_name == "sleet" {
         (Painter::plain(), Box::new(sleet::Sleet::new(pals)))
+    } else if scene_name == "sunset" {
+        (Painter::plain(), Box::new(sunset::Sunset::new()))
+    } else if scene_name == "stars" {
+        (Painter::plain(), Box::new(stars::Stars::new()))
+    } else if scene_name == "aurora" {
+        (Painter::plain(), Box::new(aurora::Aurora::new()))
     } else if scene_name == "scope" {
         (Painter::plain(), Box::new(scope::Scope::new(pals, scale, simulate)))
     } else if scene_name == "equalizer" || scene_name == "spectrum" {
