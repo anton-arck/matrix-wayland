@@ -1,30 +1,79 @@
-//! Escena "ocean": bajo el mar, en caracteres. Rayos de luz, cardumenes y peces sueltos, un pez grande
-//! que pasa de vez en cuando, medusas, algas, corales y burbujas.
+//! Escena "ocean": bajo el mar, en caracteres. Unos pocos peces grandes y detallados (payaso, cirujano
+//! y angel) entre rayos de luz, medusas, algas, corales y burbujas.
 use super::ascii::*;
 use super::sleet::smooth;
 use super::{Painter, Rng, Scene};
 
-// dibujos mirando a la derecha; hacia la izquierda se reflejan
-const SMALL: [&str; 1] = ["><>"];
-const MEDIUM: [&[&str]; 3] = [&["><((o>"], &["><|||o>"], &["  /\\", "><==o>", "  \\/"]];
-const BIG: [&str; 5] = [
-    r"       /|",
-    r"\    /====\",
-    r" \ /===|=== o\",
-    r" / \===|===  /",
-    r"/    \====/",
-];
-const COLORS: [Rgb; 6] = [
-    [1.0, 0.55, 0.15], [1.0, 0.85, 0.25], [0.95, 0.35, 0.40], [0.55, 0.95, 0.75], [0.75, 0.55, 1.0], [0.85, 0.92, 1.0],
-];
+#[derive(Clone, Copy, PartialEq)]
+enum Species { Clown, Tang, Angel }
+
+/// Que parte del pez cae en un punto.
+#[derive(Clone, Copy, PartialEq)]
+enum Part { Body, Fin, Tail }
+
+// (especie, tamano): los peces que hay siempre, uno por franja de profundidad
+const SHOAL: [(Species, f32); 5] =
+    [(Species::Clown, 0.85), (Species::Tang, 1.0), (Species::Angel, 1.0), (Species::Clown, 1.15), (Species::Tang, 0.75)];
 
 struct Fish {
-    art: &'static [&'static str],
+    species: Species,
+    len: f32, // largo y alto en celdas
+    tall: f32,
     x: f32, // columna de su extremo izquierdo
-    y: f32, // fila de arriba
+    y: f32, // fila del eje del cuerpo
     speed: f32, // columnas por segundo, con signo
     phase: f32,
-    color: Rgb,
+}
+
+impl Species {
+    fn size(self) -> (f32, f32) {
+        match self { Species::Clown => (19.0, 8.0), Species::Tang => (22.0, 11.0), Species::Angel => (17.0, 16.0) }
+    }
+
+    /// Parte en (u, v): u va de -1 (cola) a 1 (hocico) y v de -1 (arriba) a 1 (abajo).
+    /// `flap` mueve la cola.
+    fn part(self, u: f32, v: f32, flap: f32) -> Option<Part> {
+        // (grosor del cuerpo, alto de la aleta de arriba y de la de abajo)
+        let (girth, top, bottom) = match self {
+            Species::Clown => (0.74, 0.30, 0.22),
+            Species::Tang => (0.80, 0.22, 0.18),
+            Species::Angel => (0.58, 0.50, 0.50),
+        };
+        let along = (u - 0.18) / 0.82;
+        let body = if along.abs() < 1.0 { girth * (1.0 - along * along).sqrt() } else { 0.0 };
+        if u >= -0.62 && v.abs() <= body { return Some(Part::Body); }
+        if u < -0.55 && u >= -1.0 {
+            let t = (-0.55 - u) / 0.45; // 0 en el nacimiento, 1 en la punta
+            let v = v - flap * t * 0.16;
+            let fork = if self == Species::Angel { 0.0 } else { (t - 0.55).max(0.0) * 0.9 };
+            return (v.abs() <= 0.16 + t * 0.62 && v.abs() >= fork).then_some(Part::Tail);
+        }
+        // aletas: triangulos inclinados hacia atras
+        let (reach, peak) = if v < 0.0 { (top, if self == Species::Angel { -0.2 } else { 0.0 }) } else { (bottom, if self == Species::Angel { -0.2 } else { -0.1 }) };
+        let spread = if u > peak { (u - peak) / 0.5 } else { (peak - u) / 0.35 };
+        (body > 0.0 && v.abs() > body && v.abs() <= body + reach * (1.0 - spread)).then_some(Part::Fin)
+    }
+
+    /// Color de una parte; las rayas dependen de la posicion.
+    fn color(self, part: Part, u: f32, v: f32) -> Rgb {
+        match self {
+            Species::Clown => {
+                let stripe = [0.48, -0.02, -0.52].iter().any(|&s: &f32| (u - s + 0.06 * v * v).abs() < 0.075);
+                if stripe && part != Part::Tail { [0.96, 0.97, 1.0] } else { [1.0, 0.46, 0.07] }
+            }
+            Species::Tang => match part {
+                Part::Tail => [1.0, 0.84, 0.12],
+                Part::Fin => [0.10, 0.22, 0.62],
+                // la mancha oscura del lomo
+                Part::Body if u > -0.45 && u < 0.35 && (v + 0.22 - 0.2 * u).abs() < 0.17 => [0.05, 0.08, 0.30],
+                Part::Body => [0.13, 0.52, 1.0],
+            },
+            Species::Angel => {
+                let stripe = [0.42, -0.08, -0.5].iter().any(|&s: &f32| (u - s).abs() < 0.085);
+                if stripe { [0.16, 0.14, 0.22] } else if part == Part::Body { [0.93, 0.90, 0.72] } else { [1.0, 0.76, 0.20] }
+            }
+        }
+    }
 }
 
 struct Bubble { x: f32, y: f32, speed: f32, phase: f32 }
@@ -34,8 +83,6 @@ struct Weed { col: usize, height: usize, phase: f32, color: Rgb }
 pub struct Ocean {
     grid: Grid,
     fish: Vec<Fish>,
-    big: Option<Fish>,
-    big_wait: f32,
     bubbles: Vec<Bubble>,
     vents: Vec<f32>, // columnas de donde salen burbujas
     jellies: Vec<Jelly>,
@@ -44,66 +91,63 @@ pub struct Ocean {
     t: f32,
 }
 
-/// Glifo de un caracter del dibujo, reflejado si el pez va hacia la izquierda.
-fn glyph(c: char, mirrored: bool) -> Option<u8> {
-    let c = match (c, mirrored) {
-        ('>', true) => '<', ('<', true) => '>', ('(', true) => ')', (')', true) => '(',
-        ('/', true) => '\\', ('\\', true) => '/', _ => c,
-    };
-    Some(match c {
-        '>' => GREATER, '<' => LESS, '(' => OPEN, ')' => CLOSE, 'o' => RING, '=' => EQUALS,
-        '|' => BAR, '/' => SLASH, '\\' => BACKSLASH, '-' => DASH,
-        _ => return None,
-    })
+/// El mismo caracter visto en un espejo.
+fn mirror(glyph: u8) -> u8 {
+    match glyph {
+        SLASH => BACKSLASH, BACKSLASH => SLASH, OPEN => CLOSE, CLOSE => OPEN, LESS => GREATER, GREATER => LESS,
+        other => other,
+    }
 }
 
-fn width_of(art: &[&str]) -> f32 { art.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32 }
+/// Trazo del contorno segun por que lados se sale del pez (mirando a la derecha).
+fn edge(up: bool, down: bool, left: bool, right: bool) -> Option<u8> {
+    match (up, down, left, right) {
+        (false, false, false, false) => None,
+        (true, _, true, false) => Some(SLASH),
+        (true, _, false, true) => Some(BACKSLASH),
+        (false, true, true, false) => Some(BACKSLASH),
+        (false, true, false, true) => Some(SLASH),
+        (true, ..) | (_, true, ..) => Some(DASH),
+        (_, _, true, _) => Some(OPEN),
+        _ => Some(CLOSE),
+    }
+}
 
 /// Fila de la arena (en alturas de pantalla) en `x`.
 fn floor(x: f32) -> f32 { 0.93 - noise(x * 2.6, 4.0) * 0.07 - noise(x * 9.0, 2.0) * 0.015 }
 
 impl Ocean {
     pub fn new() -> Self {
-        Ocean { grid: Grid::default(), fish: vec![], big: None, big_wait: 12.0, bubbles: vec![], vents: vec![], jellies: vec![], weeds: vec![], rng: Rng::from_time(), t: 0.0 }
+        Ocean { grid: Grid::default(), fish: vec![], bubbles: vec![], vents: vec![], jellies: vec![], weeds: vec![], rng: Rng::from_time(), t: 0.0 }
     }
 
-    fn color(&mut self) -> Rgb { COLORS[(self.rng.next() % COLORS.len() as u64) as usize] }
-
-    /// Un pez que entra por un lado (o, al empezar, ya esta dentro).
-    fn swimmer(&mut self, art: &'static [&'static str], inside: bool) -> Fish {
+    /// El pez numero `i`: entra por un lado (o, al empezar, ya esta dentro) en su franja.
+    fn swimmer(&mut self, i: usize, inside: bool) -> Fish {
+        let (species, size) = SHOAL[i];
         let cols = self.grid.cols as f32;
         let rows = self.grid.rows as f32;
+        let scale = size * (rows / 59.0);
+        let (len, tall) = species.size();
+        let (len, tall) = ((len * scale).max(7.0).round(), (tall * scale).max(4.0).round());
         let right = self.rng.f() < 0.5;
-        let speed = self.rng.rf(2.5, 7.5) * if right { 1.0 } else { -1.0 };
-        let x = if inside { self.rng.rf(0.0, cols) } else if right { -width_of(art) - self.rng.rf(0.0, cols * 0.3) } else { cols + self.rng.rf(0.0, cols * 0.3) };
-        Fish { art, x, y: self.rng.rf(rows * 0.12, rows * 0.76), speed, phase: self.rng.rf(0.0, 6.28), color: self.color() }
-    }
-
-    /// Peces pequenos que nadan juntos.
-    fn school(&mut self, inside: bool) -> Vec<Fish> {
-        let leader = self.swimmer(&SMALL, inside);
-        let n = self.rng.range(9, 16);
-        (0..n).map(|_| Fish {
-            art: &SMALL,
-            x: leader.x + self.rng.rf(-11.0, 11.0),
-            y: leader.y + self.rng.rf(-4.0, 4.0),
-            speed: leader.speed * self.rng.rf(0.96, 1.04),
-            phase: self.rng.rf(0.0, 6.28),
-            color: leader.color,
-        }).collect()
+        let speed = self.rng.rf(2.5, 5.5) * if right { 1.0 } else { -1.0 };
+        let x = if inside {
+            cols * (0.1 + 0.16 * ((i * 3) % 5) as f32) + self.rng.rf(-4.0, 4.0)
+        } else if right {
+            -len - self.rng.rf(0.0, cols * 0.08)
+        } else {
+            cols + self.rng.rf(0.0, cols * 0.08)
+        };
+        let lane = rows * (0.17 + 0.135 * i as f32);
+        Fish { species, len, tall, x, y: lane + self.rng.rf(-2.0, 2.0), speed, phase: self.rng.rf(0.0, 6.28) }
     }
 
     fn populate(&mut self) {
         let aspect = self.grid.aspect();
         let cols = self.grid.cols;
         self.fish.clear();
-        self.big = None;
-        for _ in 0..3 {
-            let s = self.school(true);
-            self.fish.extend(s);
-        }
-        for i in 0..8 {
-            let f = self.swimmer(MEDIUM[i % MEDIUM.len()], true);
+        for i in 0..SHOAL.len() {
+            let f = self.swimmer(i, true);
             self.fish.push(f);
         }
         self.weeds = (0..cols / 5).map(|_| {
@@ -116,8 +160,8 @@ impl Ocean {
             }
         }).collect();
         self.vents = (0..4).map(|_| self.rng.rf(0.05, 0.95) * aspect).collect();
-        self.jellies = (0..3).map(|i| Jelly {
-            x: (0.15 + 0.32 * i as f32 + self.rng.rf(0.0, 0.1)) * aspect,
+        self.jellies = (0..2).map(|i| Jelly {
+            x: (0.2 + 0.55 * i as f32 + self.rng.rf(0.0, 0.1)) * aspect,
             y: self.rng.rf(0.2, 0.8),
             phase: self.rng.rf(0.0, 6.28),
             color: if i % 2 == 0 { [1.0, 0.55, 0.85] } else { [0.65, 0.65, 1.0] },
@@ -185,69 +229,52 @@ impl Ocean {
 
     fn draw_fish(grid: &mut Grid, f: &Fish, t: f32) {
         let mirrored = f.speed < 0.0;
-        let width = width_of(f.art) as i32;
-        let row = (f.y + (t * 1.3 + f.phase).sin() * 0.7).round() as i32;
+        let (len, tall) = (f.len as i32, f.tall as i32);
         let left = f.x.round() as i32;
-        let depth = (row as f32 / grid.rows.max(1) as f32).clamp(0.0, 1.0);
-        let color = mix(f.color, [0.05, 0.22, 0.35], depth * 0.45); // el agua se come el color
-        for (dy, line) in f.art.iter().enumerate() {
-            let chars: Vec<char> = line.chars().collect();
-            let inked = |i: usize| chars[i] != ' ';
-            let first = (0..chars.len()).find(|&i| inked(i));
-            let last = (0..chars.len()).rev().find(|&i| inked(i));
-            let (Some(first), Some(last)) = (first, last) else { continue };
-            for i in first..=last {
-                let dx = if mirrored { width - 1 - i as i32 } else { i as i32 };
-                let (col, row) = (left + dx, row + dy as i32);
-                match glyph(chars[i], mirrored) {
-                    Some(g) => Ocean::put(grid, col, row, g, color),
-                    None => Ocean::put(grid, col, row, 0, color), // dentro del pez no se ve el fondo
+        let row = (f.y + (t * 0.9 + f.phase).sin() * 0.8).round() as i32;
+        let flap = (t * 4.0 + f.phase).sin();
+        // el pez mirando a la derecha: columna i, fila j de su caja
+        let uv = |i: i32, j: i32| ((i as f32 + 0.5) / len as f32 * 2.0 - 1.0, (j as f32 + 0.5) / tall as f32 * 2.0 - 1.0);
+        let part = |i: i32, j: i32| {
+            let (u, v) = uv(i, j);
+            f.species.part(u, v, flap)
+        };
+        let eye = (((0.64 + 1.0) * 0.5 * len as f32) as i32, ((-0.16 + 1.0) * 0.5 * tall as f32) as i32);
+        for j in -1..=tall {
+            for i in 0..len {
+                let Some(kind) = part(i, j) else { continue };
+                let (u, v) = uv(i, j);
+                let color = f.species.color(kind, u, v);
+                let belly = 1.0 - 0.22 * v.max(0.0); // la luz viene de arriba
+                let color = scale(color, belly);
+                let outline = edge(part(i, j - 1).is_none(), part(i, j + 1).is_none(), part(i - 1, j).is_none(), part(i + 1, j).is_none());
+                let (mut glyph, mut ink, back) = match (outline, kind) {
+                    (Some(g), _) => (g, mix(color, [1.0; 3], 0.45), 0.42),
+                    (None, Part::Tail) => (EQUALS, mix(color, [1.0; 3], 0.25), 0.55),
+                    (None, Part::Fin) => (if v < 0.0 { SLASH } else { BACKSLASH }, mix(color, [1.0; 3], 0.2), 0.5),
+                    // escamas, y la branquia detras de la cabeza
+                    (None, Part::Body) if (u - 0.36 + 0.12 * v * v).abs() < 1.0 / len as f32 && v.abs() < 0.45 => (CLOSE, scale(color, 0.25), 0.8),
+                    (None, Part::Body) => (if (i + j) % 2 == 0 { CLOSE } else { 2 }, mix(color, [1.0; 3], 0.15), 0.7),
+                };
+                let mut bg = scale(color, back);
+                if (i, j) == eye {
+                    (glyph, ink, bg) = (AT, [0.02, 0.02, 0.05], [0.98, 0.98, 1.0]);
                 }
+                let (col, row) = (left + if mirrored { len - 1 - i } else { i }, row - tall / 2 + j);
+                if col < 0 || row < 0 || col >= grid.cols as i32 || row >= grid.rows as i32 { continue; }
+                let glyph = if mirrored && (i, j) != eye { mirror(glyph) } else { glyph };
+                grid.cells[row as usize * grid.cols + col as usize] = Cell { glyph, fg: ink, bg };
             }
         }
     }
 
     fn swim(&mut self, dt: f32) {
         let cols = self.grid.cols as f32;
-        let gone = |f: &Fish| if f.speed > 0.0 { f.x > cols + 12.0 } else { f.x < -width_of(f.art) - 12.0 };
-        for f in &mut self.fish { f.x += f.speed * dt; }
-        // cada cardumen que sale entero vuelve a entrar como otro
-        let schools = self.fish.iter().filter(|f| f.art == SMALL).count();
-        if schools > 0 {
-            let lost = self.fish.iter().filter(|f| f.art == SMALL && gone(f)).count();
-            self.fish.retain(|f| !(f.art == SMALL && gone(f)));
-            if lost > 0 && schools - lost < 18 {
-                let s = self.school(false);
-                self.fish.extend(s);
-            }
-        } else {
-            let s = self.school(false);
-            self.fish.extend(s);
-        }
         for i in 0..self.fish.len() {
-            if self.fish[i].art != SMALL && gone(&self.fish[i]) {
-                let art = self.fish[i].art;
-                self.fish[i] = self.swimmer(art, false);
-            }
-        }
-        // el pez grande
-        match &mut self.big {
-            Some(f) => {
-                f.x += f.speed * dt;
-                if gone(f) {
-                    self.big = None;
-                    self.big_wait = self.rng.rf(20.0, 45.0);
-                }
-            }
-            None => {
-                self.big_wait -= dt;
-                if self.big_wait <= 0.0 {
-                    let mut f = self.swimmer(&BIG, false);
-                    f.x = if f.speed > 0.0 { -width_of(&BIG) } else { cols };
-                    f.speed = f.speed.signum() * self.rng.rf(3.0, 4.5);
-                    f.y = self.rng.rf(0.25, 0.55) * self.grid.rows as f32;
-                    self.big = Some(f);
-                }
+            let f = &mut self.fish[i];
+            f.x += f.speed * dt;
+            if (f.speed > 0.0 && f.x > cols + 4.0) || (f.speed < 0.0 && f.x < -f.len - 4.0) {
+                self.fish[i] = self.swimmer(i, false);
             }
         }
     }
@@ -313,7 +340,6 @@ impl Scene for Ocean {
         self.swim(dt);
         self.water();
         self.life(dt);
-        if let Some(f) = &self.big { Ocean::draw_fish(&mut self.grid, f, self.t * 0.5); }
         for f in &self.fish { Ocean::draw_fish(&mut self.grid, f, self.t); }
         self.grid.present(p);
     }
@@ -324,29 +350,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mirrored_art_swaps_pairs() {
-        assert_eq!(glyph('>', true), Some(LESS));
-        assert_eq!(glyph('(', true), Some(CLOSE));
-        assert_eq!(glyph('/', true), Some(BACKSLASH));
-        for art in MEDIUM.iter().copied().chain([&SMALL[..], &BIG[..]]) {
-            for c in art.iter().flat_map(|l| l.chars()).filter(|&c| c != ' ') { assert!(glyph(c, false).is_some(), "sin glifo: {c}"); }
+    fn fish_have_body_tail_and_fins() {
+        for species in [Species::Clown, Species::Tang, Species::Angel] {
+            let mut seen = [false; 3];
+            for i in 0..40 {
+                for j in 0..40 {
+                    let (u, v) = (i as f32 / 20.0 - 0.975, j as f32 / 20.0 - 0.975);
+                    if let Some(part) = species.part(u, v, 0.0) { seen[part as usize] = true; }
+                }
+            }
+            assert_eq!(seen, [true; 3]);
+            assert!(species.part(0.2, 0.0, 0.0) == Some(Part::Body));
         }
+        assert_eq!(mirror(mirror(SLASH)), SLASH);
     }
 
     #[test]
-    fn the_sea_never_empties() {
+    fn the_same_few_fish_keep_coming_back() {
         let mut s = Ocean::new();
         let mut p = Painter::plain();
         s.resize(&mut p, 640, 360);
-        let mut saw_big = false;
-        for _ in 0..30 * 600 {
+        let mut returns = 0;
+        for _ in 0..30 * 300 {
+            let before: Vec<f32> = s.fish.iter().map(|f| f.speed).collect();
             s.swim(1.0 / 30.0);
-            saw_big |= s.big.is_some();
-            let small = s.fish.iter().filter(|f| f.art == SMALL).count();
-            assert!(small > 0 && small < 80, "peces pequenos: {small}");
-            assert_eq!(s.fish.len() - small, 8);
+            returns += s.fish.iter().zip(before).filter(|(f, speed)| f.speed != *speed).count();
+            assert_eq!(s.fish.len(), SHOAL.len());
         }
-        assert!(saw_big);
+        assert!(returns > 5);
     }
 
     #[test]
